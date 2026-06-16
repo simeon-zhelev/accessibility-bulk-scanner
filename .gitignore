@@ -1,0 +1,18 @@
+# Node (package-lock.json IS committed for reproducible installs)
+node_modules/
+npm-debug.log*
+
+# Playwright browser binaries are installed per-machine
+# (run: npx playwright install chromium)
+
+# Generated reports
+accessibility_report.html
+accessibility_report.csv
+*_report.html
+*_report.csv
+report-*.html
+report-*.csv
+
+# OS / editor
+.DS_Store
+*.swp

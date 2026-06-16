@@ -1,0 +1,22 @@
+{
+  "name": "accessibility-bulk-scanner",
+  "version": "1.0.0",
+  "description": "Headless axe-core engine for the Accessibility Bulk Scanner. Driven by accessibility_scanner.php; renders each page and runs axe-core against the live DOM.",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "axe-runner": "axe-runner.js"
+  },
+  "scripts": {
+    "postinstall": "echo '\\nNext: install the browser engine ->  npx playwright install chromium\\n'",
+    "browser": "playwright install chromium"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "axe-core": "^4.10.0",
+    "playwright": "^1.48.0"
+  }
+}
