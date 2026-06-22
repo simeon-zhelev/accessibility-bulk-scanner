@@ -2,8 +2,6 @@
 
 Audit the accessibility of **every page of a website** against WCAG, driven by its XML sitemap, in parallel — and get a self-contained HTML dashboard + CSV export.
 
-The companion of the [PageSpeed Bulk Scanner](pagespeed_scanner.php): same sitemap crawling, same dark-themed report style, but it checks **WCAG / accessibility** instead of performance.
-
 Works with **WordPress (Yoast SEO)**, **Shopify**, and any site exposing a standard XML sitemap or sitemap index.
 
 ## How it works
@@ -120,11 +118,15 @@ accessibility-bulk-scanner/
 ├── accessibility_scanner.php   # orchestrator + report generator (run this)
 ├── axe-runner.js               # headless axe-core engine (Playwright)
 ├── package.json                # Node dependencies
-├── pagespeed_scanner.php        # companion performance scanner
 ├── README.md
 ├── LICENSE                     # MIT
 └── .gitignore
 ```
+
+## Related
+
+Looking for a **PageSpeed / performance** bulk scanner over a sitemap? That's a separate tool:
+[pagespeed-bulk-scanner](https://github.com/simeon-zhelev/pagespeed-bulk-scanner) — same sitemap-driven approach, same dark-themed report style, but measures Core Web Vitals / PageSpeed Insights scores instead of WCAG accessibility.
 
 ## License
 

@@ -11,8 +11,7 @@
  *   - a console summary
  *
  * Architecture
- *   PHP does what it already does well in the companion PageSpeed scanner:
- *   sitemap crawling, orchestration, aggregation and report generation.
+ *   PHP handles sitemap crawling, orchestration, aggregation and report generation.
  *   Because accessibility rules only mean anything against a *rendered* DOM
  *   — which PHP cannot produce — the actual axe-core run happens in a small
  *   Node helper (axe-runner.js) that drives headless Chromium via Playwright.
