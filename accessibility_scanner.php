@@ -255,27 +255,36 @@ function collect_urls(string $sitemapUrl, ?int $maxUrls = null): array {
 
 const IMPACTS = ['critical', 'serious', 'moderate', 'minor'];
 
-function preflight(array $args): void {
+/**
+ * Check the runtime prerequisites. Returns a human-readable problem string,
+ * or null if everything is in place. Shared by the CLI preflight() and the
+ * web frontend so both report the same diagnostics.
+ */
+function preflight_problem(array $args): ?string {
     // Node present?
     $ver = trim((string)@shell_exec(escapeshellarg($args['node']) . ' --version 2>/dev/null'));
     if ($ver === '') {
-        fwrite(STDERR,
-            "❌  Node.js not found (looked for '{$args['node']}').\n" .
-            "    Install Node 18+ and re-run, or pass --node=/path/to/node.\n");
-        exit(1);
+        return "Node.js not found (looked for '{$args['node']}'). "
+             . "Install Node 18+ and re-run, or pass --node=/path/to/node.";
     }
     // Runner present?
     if (!is_file($args['runner'])) {
-        fwrite(STDERR, "❌  axe runner not found at {$args['runner']} (use --runner=PATH).\n");
-        exit(1);
+        return "axe runner not found at {$args['runner']} (use --runner=PATH).";
     }
     // Dependencies installed?
     $nm = dirname($args['runner']) . '/node_modules/@axe-core/playwright';
     if (!is_dir($nm)) {
-        fwrite(STDERR,
-            "❌  Node dependencies missing. In " . dirname($args['runner']) . " run:\n" .
-            "      npm install\n" .
-            "      npx playwright install chromium\n");
+        return "Node dependencies missing. In " . dirname($args['runner']) . " run:\n"
+             . "  npm install\n"
+             . "  npx playwright install chromium";
+    }
+    return null;
+}
+
+function preflight(array $args): void {
+    $problem = preflight_problem($args);
+    if ($problem !== null) {
+        fwrite(STDERR, "❌  " . str_replace("\n", "\n    ", $problem) . "\n");
         exit(1);
     }
 }
@@ -284,7 +293,7 @@ function preflight(array $args): void {
  * Launch the Node runner once and stream back NDJSON.
  * Returns [results(map url=>row), engineVersion].
  */
-function scan_all(array $urls, array $urlToGroup, array $args): array {
+function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEvent = null): array {
     $payload = [];
     foreach ($urls as $u) {
         $payload[] = ['url' => $u, 'group' => $urlToGroup[$u] ?? null];
@@ -300,8 +309,13 @@ function scan_all(array $urls, array $urlToGroup, array $args): array {
         '--timeout', (string)$args['timeout'],
     ]));
 
-    echo "⚡  Scanning " . count($urls) . " pages with axe-core "
-       . "(concurrency {$args['concurrency']}, tags {$args['tags']}) …\n\n";
+    if ($onEvent) {
+        $onEvent(['phase' => 'scan-start', 'total' => count($urls),
+                  'concurrency' => $args['concurrency'], 'tags' => $args['tags']]);
+    } else {
+        echo "⚡  Scanning " . count($urls) . " pages with axe-core "
+           . "(concurrency {$args['concurrency']}, tags {$args['tags']}) …\n\n";
+    }
 
     $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
     $proc = proc_open($cmd, $descriptors, $pipes, dirname($args['runner']));
@@ -319,7 +333,7 @@ function scan_all(array $urls, array $urlToGroup, array $args): array {
     $buf     = '';
     $open    = [1 => $pipes[1], 2 => $pipes[2]];
 
-    $handleLine = function (string $line) use (&$results, &$engine): void {
+    $handleLine = function (string $line) use (&$results, &$engine, $onEvent): void {
         $line = trim($line);
         if ($line === '') return;
         $obj = json_decode($line, true);
@@ -328,6 +342,16 @@ function scan_all(array $urls, array $urlToGroup, array $args): array {
         if ($type === 'result') {
             if ($engine === null && !empty($obj['engine'])) $engine = $obj['engine'];
             $results[$obj['url']] = $obj;
+            if ($onEvent) {
+                $onEvent([
+                    'phase'   => 'page',
+                    'done'    => count($results),
+                    'url'     => $obj['url'],
+                    'ok'      => $obj['ok'] ?? false,
+                    'error'   => $obj['error'] ?? null,
+                    'counts'  => $obj['counts'] ?? null,
+                ]);
+            }
         }
     };
 
@@ -935,4 +959,8 @@ function main(array $argv): void {
     print_summary($agg, $results);
 }
 
-main($argv);
+// Run as a CLI tool only. When this file is require()d (e.g. by the web
+// frontend in web/) we expose the functions above without auto-running.
+if (PHP_SAPI === 'cli') {
+    main($argv);
+}

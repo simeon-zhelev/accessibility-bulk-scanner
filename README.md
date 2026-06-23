@@ -36,6 +36,23 @@ php accessibility_scanner.php \
 
 **Tip:** for a first run on a large site, do a trial with `--max-urls=20` to confirm everything works before scanning all pages.
 
+## Web UI
+
+Prefer a browser to the command line? A small landing page is included in `web/`. It serves a form for the sitemap URL and every scan option, streams **live per-page progress**, and shows the full report inline (plus HTML/CSV downloads) — no command line needed.
+
+```bash
+# Install once (same as above)
+npm install
+npx playwright install chromium
+
+# Start the built-in PHP web server, then open http://127.0.0.1:8000
+php -S 127.0.0.1:8000 -t web
+```
+
+It reuses the exact same engine as the CLI — `accessibility_scanner.php` + `axe-runner.js` — so results are identical. Generated reports are written to `web/reports/` (git-ignored).
+
+> **Note:** the web UI runs scans on demand and renders arbitrary pages in a headless browser, so keep it bound to `127.0.0.1` / a trusted network rather than exposing it publicly.
+
 ## Requirements
 
 - **PHP 7.4+** with the `curl` and `simplexml` extensions (standard on macOS, most Linux distros, and common hosting). PHP only crawls the sitemap and builds reports — it does not need a browser.

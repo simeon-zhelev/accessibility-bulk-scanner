@@ -12,6 +12,8 @@ accessibility_report.csv
 *_report.csv
 report-*.html
 report-*.csv
+/report.html
+/report.csv
 
 # OS / editor
 .DS_Store
