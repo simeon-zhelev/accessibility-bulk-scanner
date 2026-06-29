@@ -755,7 +755,7 @@ HTML;
  */
 function results_section(array $results, array $urlToGroup): string {
     $hasGroups = count(array_unique(array_values($urlToGroup))) > 1;
-    $groupHead = $hasGroups ? '<th>Group</th>' : '';
+    $groupHead = $hasGroups ? '<th class="th-left" onclick="sortTable(this)">Group</th>' : '';
     $colspan   = $hasGroups ? 9 : 8;   // every column, for the detail row
     $rank = ['critical'=>0,'serious'=>1,'moderate'=>2,'minor'=>3];
     $rows = '';
@@ -765,20 +765,23 @@ function results_section(array $results, array $urlToGroup): string {
         $url    = $r['url'];
         $urlEsc = htmlspecialchars($url);
         $short  = htmlspecialchars(preg_replace('#^https?://#', '', $url));
-        $g      = $hasGroups
-            ? '<td class="gname">' . htmlspecialchars($urlToGroup[$url] ?? '') . '</td>' : '';
+        $shortLc= htmlspecialchars(strtolower(preg_replace('#^https?://#', '', $url)));
+        $gName  = htmlspecialchars($urlToGroup[$url] ?? '');
+        $g      = $hasGroups ? "<td class=\"gname\" data-sort=\"$gName\">$gName</td>" : '';
 
         if (empty($r['ok'])) {
             $err = htmlspecialchars(mb_substr((string)($r['error'] ?? 'error'), 0, 120));
-            $rows .= "<tr><td class=\"num\">$i</td>"
-                   . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
+            $rows .= "<tr class=\"error-row\"><td class=\"num\" data-sort=\"$i\">$i</td>"
+                   . "<td class=\"url-cell\" data-sort=\"$shortLc\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
                    . "$g<td colspan=\"6\" style=\"color:#dc2626;font-size:0.72rem;text-align:left\">⚠ $err</td></tr>";
             continue;
         }
 
         $c = $r['counts'] ?? [];
-        $cell = fn($k, $col) => '<td>' . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
+        $cell = fn($k, $col) => '<td data-sort="' . (int)($c[$k] ?? 0) . '">'
+            . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
         $total = (int)($c['violations'] ?? 0);
+        $incomplete = (int)($c['incomplete'] ?? 0);
         $totColor = $total === 0 ? '#15803d' : '#1e293b';
 
         // Per-page issue list (shown in the expandable detail row).
@@ -806,15 +809,15 @@ function results_section(array $results, array $urlToGroup): string {
         $caret   = $expandable ? '<span class="caret">▸</span>' : '';
         $rowAttr = $expandable ? ' class="row expandable" onclick="toggleRow(this)"' : '';
 
-        $rows .= "<tr$rowAttr><td class=\"num\">$caret$i</td>"
-               . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\" onclick=\"event.stopPropagation()\">$short</a></td>"
+        $rows .= "<tr$rowAttr><td class=\"num\" data-sort=\"$i\">$caret$i</td>"
+               . "<td class=\"url-cell\" data-sort=\"$shortLc\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\" onclick=\"event.stopPropagation()\">$short</a></td>"
                . "$g"
                . $cell('critical', impact_text_color('critical'))
                . $cell('serious',  impact_text_color('serious'))
                . $cell('moderate', impact_text_color('moderate'))
                . $cell('minor',    impact_text_color('minor'))
-               . "<td style=\"color:$totColor;font-weight:700\">$total</td>"
-               . "<td>" . count_badge((int)($c['incomplete'] ?? 0), '#64748b') . "</td></tr>";
+               . "<td data-sort=\"$total\" style=\"color:$totColor;font-weight:700\">$total</td>"
+               . "<td data-sort=\"$incomplete\">" . count_badge($incomplete, '#64748b') . "</td></tr>";
         if ($expandable) {
             $rows .= "<tr class=\"detail-row\" hidden><td colspan=\"$colspan\">"
                    . "<ul class=\"opp-list\">$lis</ul></td></tr>";
@@ -823,12 +826,16 @@ function results_section(array $results, array $urlToGroup): string {
     return <<<HTML
 
 <div class="section-title" id="results">📋 Results
-  <span class="hint-inline">— click a row with issues to see the details</span></div>
+  <span class="hint-inline">— click a row with issues to see the details, or a column header to sort</span></div>
 <div class="table-wrap">
-  <table>
-    <thead><tr><th>#</th><th>URL</th>$groupHead
-      <th>Critical</th><th>Serious</th><th>Moderate</th><th>Minor</th>
-      <th>Total</th><th>Review</th></tr></thead>
+  <table class="sortable">
+    <thead><tr>
+      <th onclick="sortTable(this)">#</th>
+      <th class="th-left" onclick="sortTable(this)">URL</th>$groupHead
+      <th onclick="sortTable(this)">Critical</th><th onclick="sortTable(this)">Serious</th>
+      <th onclick="sortTable(this)">Moderate</th><th onclick="sortTable(this)">Minor</th>
+      <th onclick="sortTable(this)">Total</th><th onclick="sortTable(this)">Review</th>
+    </tr></thead>
     <tbody>$rows</tbody>
   </table>
 </div>
@@ -879,6 +886,11 @@ function build_html(array $results, array $urlToGroup, array $agg,
   th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #e2e8f0; }
   th     { background: #f1f5f9; color: #475569; font-weight: 600;
            text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+  table.sortable th { cursor: pointer; user-select: none; }
+  table.sortable th:hover { color: #1e293b; }
+  th.th-left { text-align: left; }
+  th.sort-asc::after  { content: " ▲"; font-size: 0.6rem; opacity: .7; }
+  th.sort-desc::after { content: " ▼"; font-size: 0.6rem; opacity: .7; }
   td.url-cell { text-align: left; max-width: 320px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
   td.url-cell a { color: #1d4ed8; text-decoration: none; }
@@ -956,6 +968,46 @@ function toggleRow(tr) {
   if (!d || !d.classList.contains('detail-row')) return;
   if (d.hasAttribute('hidden')) { d.removeAttribute('hidden'); tr.classList.add('open'); }
   else { d.setAttribute('hidden', ''); tr.classList.remove('open'); }
+}
+
+function sortTable(th) {
+  var table = th.closest('table');
+  var tbody = table.tBodies[0];
+  var headRow = th.parentNode;
+  var col = Array.prototype.indexOf.call(headRow.children, th);
+  var asc = !th.classList.contains('sort-asc');
+  for (var k = 0; k < headRow.children.length; k++)
+    headRow.children[k].classList.remove('sort-asc', 'sort-desc');
+  th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+
+  // Pair each main row with its following detail row so they move together.
+  var rows = Array.prototype.slice.call(tbody.rows), pairs = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].classList.contains('detail-row')) continue;
+    var pair = [rows[i]];
+    if (rows[i + 1] && rows[i + 1].classList.contains('detail-row')) { pair.push(rows[i + 1]); i++; }
+    pairs.push(pair);
+  }
+
+  function keyOf(pair) {
+    var c = pair[0].cells[col];
+    if (!c) return { n: null, s: '' };
+    var raw = c.hasAttribute('data-sort') ? c.getAttribute('data-sort') : c.textContent.trim();
+    var numeric = raw !== '' && /^-?[0-9.]+$/.test(raw);
+    return { n: numeric ? parseFloat(raw) : null, s: raw.toLowerCase() };
+  }
+
+  var dir = asc ? 1 : -1;
+  pairs.sort(function (a, b) {
+    var errA = a[0].classList.contains('error-row'), errB = b[0].classList.contains('error-row');
+    if (errA !== errB) return errA ? 1 : -1;            // load errors always last
+    var ka = keyOf(a), kb = keyOf(b);
+    if (ka.n !== null && kb.n !== null) return (ka.n - kb.n) * dir;
+    if (ka.s !== kb.s) return (ka.s < kb.s ? -1 : 1) * dir;
+    return 0;
+  });
+
+  pairs.forEach(function (p) { p.forEach(function (r) { tbody.appendChild(r); }); });
 }
 </script>
 </body>
