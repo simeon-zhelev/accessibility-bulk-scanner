@@ -180,7 +180,6 @@ async function scanUrl(browser, urlObj, opts) {
 // ─── Concurrency pool ────────────────────────────────────────────────────────
 async function runPool(browser, urls, opts) {
   let index = 0;
-  let done = 0;
   const total = urls.length;
 
   const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
@@ -191,12 +190,7 @@ async function runPool(browser, urls, opts) {
       if (myIndex >= total) return;
       const urlObj = urls[myIndex];
       const res = await scanUrl(browser, urlObj, opts);
-      done++;
       emit(res);
-      const tag = res.ok
-        ? `✓ ${res.counts.violations} issues (${res.counts.rules} rules)`
-        : `✗ ${res.error}`;
-      process.stderr.write(`  [${done}/${total}] ${tag}  ${urlObj.url}\n`);
     }
   }
 
