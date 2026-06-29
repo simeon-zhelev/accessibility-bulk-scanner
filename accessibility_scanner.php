@@ -6,7 +6,7 @@
  * Crawls a sitemap (Yoast / Shopify / generic / sitemap-index / .xml.gz),
  * then renders every page in a headless browser and runs the open-source
  * axe-core accessibility engine against each one. Produces:
- *   - a self-contained dark-themed HTML dashboard  (accessibility_report.html)
+ *   - a self-contained light-themed HTML dashboard (accessibility_report.html)
  *   - a CSV export                                 (accessibility_report.csv)
  *   - a console summary
  *
@@ -57,6 +57,7 @@ function standard_to_tags(string $standard): ?string {
 function parse_args(array $argv): array {
     $defaults = [
         'sitemap'     => null,
+        'url'         => null,         // site URL — sitemap is auto-discovered
         'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
         'standard'    => null,         // shortcut that overrides --tags
         'no-best-practice' => false,
@@ -69,10 +70,15 @@ function parse_args(array $argv): array {
         'csv'         => 'accessibility_report.csv',
     ];
     $opts = getopt('', [
-        'sitemap:', 'tags:', 'standard:', 'no-best-practice',
+        'sitemap:', 'url:', 'tags:', 'standard:', 'no-best-practice',
         'max-urls:', 'concurrency:', 'timeout:', 'node:', 'runner:',
         'output:', 'csv:', 'help',
     ]);
+
+    // --url is an alias: pass a site URL and the sitemap is auto-discovered.
+    if (empty($opts['sitemap']) && !empty($opts['url'])) {
+        $opts['sitemap'] = $opts['url'];
+    }
 
     if (isset($opts['help']) || empty($opts['sitemap'])) {
         echo <<<HELP
@@ -81,9 +87,13 @@ Bulk accessibility (WCAG) scanner — axe-core over an XML sitemap
 
 Usage:
   php accessibility_scanner.php --sitemap=URL [options]
+  php accessibility_scanner.php --url=https://example.com   (auto-find sitemap)
 
 Options:
-  --sitemap=URL        sitemap_index.xml or any child sitemap (required)
+  --sitemap=URL        sitemap_index.xml, any child sitemap, OR a plain site
+                       URL/domain whose sitemap is auto-discovered (required)
+  --url=URL            Alias for --sitemap; a site URL whose sitemap is
+                       auto-discovered via robots.txt + common paths
   --standard=S         Convenience preset, sets --tags:
                          wcag2a | wcag2aa | wcag21a | wcag21aa (default) |
                          wcag22aa | section508
@@ -100,6 +110,9 @@ Options:
   --help               Show this help
 
 Examples:
+  # Auto-discover the sitemap from just the site URL
+  php accessibility_scanner.php --url=https://example.com --standard=wcag21aa
+
   # Full WCAG 2.1 AA scan of a WordPress/Yoast site
   php accessibility_scanner.php \\
       --sitemap=https://example.com/sitemap_index.xml --standard=wcag21aa
@@ -170,6 +183,96 @@ function http_get(string $url, int $timeout = 30): string {
         if ($decoded !== false) $body = $decoded;
     }
     return $body;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Sitemap discovery (accept a plain site URL and find its sitemap)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Does this URL already point at a sitemap (rather than a site root)? */
+function looks_like_sitemap(string $url): bool {
+    $path = strtolower((string)parse_url($url, PHP_URL_PATH));
+    return (bool)preg_match('/\.xml(\.gz)?$/', $path) || strpos($path, 'sitemap') !== false;
+}
+
+/** Is this XML string a valid sitemap or sitemap index? */
+function is_sitemap_xml(string $body): bool {
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($body);
+    libxml_clear_errors();
+    return $xml !== false && in_array($xml->getName(), ['sitemapindex', 'urlset'], true);
+}
+
+/**
+ * Resolve a user-supplied URL into a usable sitemap URL.
+ *
+ * Accepts either a direct sitemap URL (returned as-is) or a plain site URL /
+ * domain, in which case it auto-discovers the sitemap by (1) reading robots.txt
+ * for `Sitemap:` directives, then (2) probing a list of common sitemap paths.
+ * Returns the discovered sitemap URL, or null if none could be confirmed.
+ * $log is an optional callback for progress lines (defaults to echo).
+ */
+function discover_sitemap(string $input, ?callable $log = null): ?string {
+    $say = function (string $m) use ($log) { $log ? $log($m) : print($m . "\n"); };
+
+    $input = trim($input);
+    if ($input === '') return null;
+    if (!preg_match('#^https?://#i', $input)) {
+        $input = 'https://' . ltrim($input, '/');
+    }
+
+    // Already a sitemap URL? Use it directly.
+    if (looks_like_sitemap($input)) return $input;
+
+    $say("🔎 Auto-discovering sitemap for $input …");
+
+    $parts  = parse_url($input);
+    $host   = $parts['host'] ?? '';
+    if ($host === '') return null;
+    $origin = ($parts['scheme'] ?? 'https') . '://' . $host
+            . (isset($parts['port']) ? ':' . $parts['port'] : '');
+
+    $candidates = [];
+
+    // 1 — robots.txt Sitemap: directives (the authoritative source)
+    try {
+        $robots = http_get($origin . '/robots.txt', 10);
+        if (preg_match_all('/^\s*Sitemap:\s*(\S+)/im', $robots, $m)) {
+            foreach ($m[1] as $loc) {
+                $loc = trim($loc);
+                if ($loc !== '') $candidates[] = $loc;
+            }
+            if ($candidates) $say('   robots.txt lists ' . count($candidates) . ' sitemap(s).');
+        }
+    } catch (Throwable $e) {
+        // No robots.txt — fall through to common paths.
+    }
+
+    // 2 — Common sitemap locations (WordPress/Yoast, Shopify, generic)
+    foreach ([
+        '/sitemap_index.xml', '/sitemap-index.xml', '/sitemap.xml',
+        '/wp-sitemap.xml', '/sitemap.xml.gz', '/sitemap/sitemap.xml',
+    ] as $p) {
+        $candidates[] = $origin . $p;
+    }
+
+    // Probe each candidate; return the first that is a real sitemap.
+    $seen = [];
+    foreach ($candidates as $url) {
+        if (isset($seen[$url])) continue;
+        $seen[$url] = true;
+        try {
+            $body = http_get($url, 12);
+        } catch (Throwable $e) {
+            continue;
+        }
+        if (is_sitemap_xml($body)) {
+            $say("   ✓ Found sitemap: $url");
+            return $url;
+        }
+    }
+
+    return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -468,6 +571,22 @@ function impact_color(?string $impact): string {
     }
 }
 
+/**
+ * Darker impact shades for COLOURED TEXT on the light theme. The vivid
+ * impact_color() values are tuned for white-on-colour badges; as text on a
+ * white background several of them fall below WCAG contrast, so number cells
+ * and big scores use these higher-contrast variants instead.
+ */
+function impact_text_color(?string $impact): string {
+    switch ($impact) {
+        case 'critical': return '#dc2626';
+        case 'serious':  return '#c2410c';
+        case 'moderate': return '#b45309';
+        case 'minor':    return '#2563eb';
+        default:         return '#64748b';
+    }
+}
+
 function impact_badge(?string $impact): string {
     $c = impact_color($impact);
     $label = $impact ? ucfirst($impact) : 'n/a';
@@ -483,10 +602,10 @@ function count_badge(int $n, string $color): string {
 function summary_cards(array $agg, int $totalPages): string {
     $t = $agg['totals'];
     $cards = [
-        ['Critical', $t['critical'], impact_color('critical')],
-        ['Serious',  $t['serious'],  impact_color('serious')],
-        ['Moderate', $t['moderate'], impact_color('moderate')],
-        ['Minor',    $t['minor'],    impact_color('minor')],
+        ['Critical', $t['critical'], impact_text_color('critical')],
+        ['Serious',  $t['serious'],  impact_text_color('serious')],
+        ['Moderate', $t['moderate'], impact_text_color('moderate')],
+        ['Minor',    $t['minor'],    impact_text_color('minor')],
     ];
     $html = '';
     foreach ($cards as [$label, $n, $color]) {
@@ -499,7 +618,7 @@ function summary_cards(array $agg, int $totalPages): string {
       </div>
 CARD;
     }
-    $green = '#22c55e';
+    $green = '#15803d';
     $pwi = $agg['pagesWithIssues'];
     $clean = $agg['cleanPages'];
     $rules = $agg['uniqueRules'];
@@ -510,7 +629,7 @@ CARD;
 <div class="section-title">♿ Issues by Impact</div>
 <div class="cards">$html</div>
 <div class="stats">
-  <span><strong style="color:#f87171">$pwi</strong> / $totalPages pages with issues</span>
+  <span><strong style="color:#dc2626">$pwi</strong> / $totalPages pages with issues</span>
   <span><strong style="color:$green">$clean</strong> clean pages</span>
   <span><strong>$rules</strong> unique rules failing</span>$errLine
 </div>
@@ -521,7 +640,7 @@ function top_issues_table(array $agg, int $totalPages): string {
     $rules = $agg['rules'];
     if (!$rules) {
         return '<div class="section-title">🏆 Top Issues</div>'
-             . '<p style="color:#22c55e;font-size:0.9rem">No automated WCAG '
+             . '<p style="color:#15803d;font-size:0.9rem">No automated WCAG '
              . 'violations detected. Manual testing is still required for full coverage.</p>';
     }
     $rows = '';
@@ -609,11 +728,11 @@ function group_breakdown(array $results, array $urlToGroup): string {
     foreach ($groups as $g => $d) {
         $gEsc = htmlspecialchars($g);
         $avg  = $d['pages'] ? round($d['violations'] / $d['pages'], 1) : 0;
-        $avgColor = $avg == 0 ? '#22c55e' : ($avg <= 5 ? '#f59e0b' : '#ef4444');
+        $avgColor = $avg == 0 ? '#15803d' : ($avg <= 5 ? '#b45309' : '#dc2626');
         $rows .= "<tr><td class=\"gname\">$gEsc</td><td>{$d['pages']}</td>"
                . "<td>{$d['violations']}</td>"
-               . "<td>" . count_badge($d['critical'], impact_color('critical')) . "</td>"
-               . "<td>" . count_badge($d['serious'], impact_color('serious')) . "</td>"
+               . "<td>" . count_badge($d['critical'], impact_text_color('critical')) . "</td>"
+               . "<td>" . count_badge($d['serious'], impact_text_color('serious')) . "</td>"
                . "<td><span style=\"color:$avgColor;font-weight:700\">$avg</span></td></tr>";
     }
     return <<<HTML
@@ -716,14 +835,14 @@ function detail_table(array $results, array $urlToGroup): string {
         $c = $r['counts'] ?? [];
         $cell = fn($k, $col) => '<td>' . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
         $total = (int)($c['violations'] ?? 0);
-        $totColor = $total === 0 ? '#22c55e' : '#e2e8f0';
+        $totColor = $total === 0 ? '#15803d' : '#1e293b';
         $rows .= "<tr><td class=\"num\">$i</td>"
                . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
                . "$g"
-               . $cell('critical', impact_color('critical'))
-               . $cell('serious',  impact_color('serious'))
-               . $cell('moderate', impact_color('moderate'))
-               . $cell('minor',    impact_color('minor'))
+               . $cell('critical', impact_text_color('critical'))
+               . $cell('serious',  impact_text_color('serious'))
+               . $cell('moderate', impact_text_color('moderate'))
+               . $cell('minor',    impact_text_color('minor'))
                . "<td style=\"color:$totColor;font-weight:700\">$total</td>"
                . "<td>" . count_badge((int)($c['incomplete'] ?? 0), '#64748b') . "</td></tr>";
     }
@@ -765,55 +884,57 @@ function build_html(array $results, array $urlToGroup, array $agg,
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body  { font-family: system-ui, -apple-system, sans-serif;
-          background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px 28px; }
-  h1    { font-size: 1.6rem; margin-bottom: 4px; color: #f8fafc; }
-  .meta { font-size: 0.8rem; color: #64748b; margin-bottom: 22px; line-height: 1.6; }
-  .section-title { font-size: 0.8rem; font-weight: 700; color: #64748b;
+          background: #ffffff; color: #1e293b; margin: 0; padding: 24px 28px; }
+  h1    { font-size: 1.6rem; margin-bottom: 4px; color: #0f172a; }
+  .meta { font-size: 0.8rem; color: #475569; margin-bottom: 22px; line-height: 1.6; }
+  .section-title { font-size: 0.8rem; font-weight: 700; color: #475569;
                    text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; }
-  .card  { background: #1e293b; border-radius: 10px; padding: 16px 22px; min-width: 148px; flex: 1; }
-  .card-label { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; }
+  .card  { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+           padding: 16px 22px; min-width: 148px; flex: 1; }
+  .card-label { font-size: 0.72rem; color: #475569; text-transform: uppercase; letter-spacing: .06em; }
   .card-score { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 4px 0; }
   .card-sub   { font-size: 0.7rem; color: #64748b; }
   .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px;
-           font-size: 0.85rem; color: #94a3b8; }
-  .table-wrap { overflow-x: auto; border-radius: 10px; background: #1e293b; margin-top: 4px; }
-  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; }
-  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #334155; }
-  th     { background: #0f172a; color: #94a3b8; font-weight: 600;
+           font-size: 0.85rem; color: #475569; }
+  .table-wrap { overflow-x: auto; border-radius: 10px; background: #ffffff;
+                border: 1px solid #e2e8f0; margin-top: 4px; }
+  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: #1e293b; }
+  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #e2e8f0; }
+  th     { background: #f1f5f9; color: #475569; font-weight: 600;
            text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
   td.url-cell { text-align: left; max-width: 320px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
-  td.url-cell a { color: #93c5fd; text-decoration: none; }
+  td.url-cell a { color: #1d4ed8; text-decoration: none; }
   td.url-cell a:hover { text-decoration: underline; }
-  td.gname { text-align: left; font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
-  td.num   { color: #475569; width: 32px; }
-  tr:hover td { background: #263045; }
+  td.gname { text-align: left; font-size: 0.72rem; color: #475569; white-space: nowrap; }
+  td.num   { color: #94a3b8; width: 32px; }
+  tr:hover td { background: #f1f5f9; }
   td.opp-title { text-align: left; }
-  td.opp-title a { color: #93c5fd; text-decoration: none; }
+  td.opp-title a { color: #1d4ed8; text-decoration: none; }
   td.opp-title a:hover { text-decoration: underline; }
   .rule-id { font-size: 0.66rem; color: #64748b; font-family: ui-monospace, monospace; margin-top: 2px; }
-  .pgbar  { position: relative; background: #0f172a; border-radius: 6px;
-            height: 18px; min-width: 160px; overflow: hidden; }
-  .pgfill { height: 100%; border-radius: 6px; opacity: .55; }
+  .pgbar  { position: relative; background: #f1f5f9; border: 1px solid #e2e8f0;
+            border-radius: 6px; height: 18px; min-width: 160px; overflow: hidden; }
+  .pgfill { height: 100%; border-radius: 6px; opacity: .85; }
   .pgtext { position: absolute; inset: 0; display: flex; align-items: center;
-            justify-content: center; font-size: 0.7rem; color: #e2e8f0; }
+            justify-content: center; font-size: 0.7rem; color: #1e293b; }
   .opp-container { display: flex; flex-direction: column; gap: 6px; }
-  .opp-details   { background: #1e293b; border-radius: 8px; padding: 10px 14px; }
+  .opp-details   { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; }
   .opp-details summary { cursor: pointer; font-size: 0.82rem; }
-  .opp-details summary a { color: #93c5fd; text-decoration: none; }
+  .opp-details summary a { color: #1d4ed8; text-decoration: none; }
   .opp-details summary a:hover { text-decoration: underline; }
   .opp-body { margin-top: 8px; }
   .opp-list { margin: 4px 0 0; padding-left: 4px; font-size: 0.8rem; list-style: none; }
   .opp-list li { margin: 7px 0; line-height: 1.5; }
-  .opp-savings { color: #f59e0b; font-size: 0.72rem; }
+  .opp-savings { color: #b45309; font-size: 0.72rem; }
   .sel { font-family: ui-monospace, monospace; font-size: 0.68rem; color: #64748b;
          margin: 2px 0 0 6px; word-break: break-all; }
   .mini { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 10px;
           color: #fff; font-size: 0.68rem; font-weight: 700; margin-left: 4px; }
-  .badge-err { background: #ef4444; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.68rem; }
-  .err-msg { color: #fca5a5; font-size: 0.78rem; }
-  .legend { margin-top: 22px; font-size: 0.72rem; color: #64748b; }
+  .badge-err { background: #b91c1c; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.68rem; }
+  .err-msg { color: #b91c1c; font-size: 0.78rem; }
+  .legend { margin-top: 22px; font-size: 0.72rem; color: #475569; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
   .disclaimer { font-size: 0.72rem; color: #64748b; margin-top: 8px; max-width: 760px; }
 </style>
@@ -920,6 +1041,16 @@ function print_summary(array $agg, array $results): void {
 function main(array $argv): void {
     $args = parse_args($argv);
     preflight($args);
+
+    // 0 — Resolve the sitemap (accepts a direct sitemap URL or a plain site URL)
+    $resolved = discover_sitemap($args['sitemap']);
+    if ($resolved === null) {
+        fwrite(STDERR, "❌  Could not find a sitemap for '{$args['sitemap']}'.\n"
+            . "    Pass a direct sitemap URL, e.g. "
+            . "--sitemap=https://example.com/sitemap_index.xml\n");
+        exit(1);
+    }
+    $args['sitemap'] = $resolved;
 
     // 1 — Collect URLs from the sitemap
     [$urls, $urlToGroup] = collect_urls($args['sitemap'], $args['max-urls']);

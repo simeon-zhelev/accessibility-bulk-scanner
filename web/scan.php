@@ -52,9 +52,17 @@ function fail(string $message): void {
 }
 
 // ── Build the scan arguments from the query string ───────────────────────────
+// Accepts either a direct sitemap URL or a plain site URL/domain (the sitemap
+// is then auto-discovered). Both arrive in the same `sitemap` field.
 $sitemap = trim((string)($_GET['sitemap'] ?? ''));
-if ($sitemap === '' || !filter_var($sitemap, FILTER_VALIDATE_URL)) {
-    fail('Please provide a valid sitemap URL (http or https).');
+if ($sitemap === '') {
+    fail('Please provide a website or sitemap URL.');
+}
+if (!preg_match('#^https?://#i', $sitemap)) {
+    $sitemap = 'https://' . ltrim($sitemap, '/');
+}
+if (!filter_var($sitemap, FILTER_VALIDATE_URL)) {
+    fail('Please provide a valid website or sitemap URL (http or https).');
 }
 
 $args = [
@@ -92,6 +100,24 @@ $problem = preflight_problem($args);
 if ($problem !== null) {
     fail($problem);
 }
+
+// ── Resolve the sitemap (direct URL, or auto-discover from a site URL) ────────
+if (!looks_like_sitemap($args['sitemap'])) {
+    sse('status', ['message' => 'Looking for the sitemap…']);
+}
+try {
+    ob_start();
+    $resolved = discover_sitemap($args['sitemap']);
+    ob_end_clean();
+} catch (Throwable $e) {
+    if (ob_get_level() > 0) ob_end_clean();
+    $resolved = null;
+}
+if ($resolved === null) {
+    fail("Could not find a sitemap for '{$args['sitemap']}'. "
+       . 'Try entering the sitemap URL directly (e.g. https://example.com/sitemap_index.xml).');
+}
+$args['sitemap'] = $resolved;
 
 // ── Run the scan ─────────────────────────────────────────────────────────────
 try {

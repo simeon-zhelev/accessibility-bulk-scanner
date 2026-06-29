@@ -7,28 +7,28 @@
 <title>Accessibility Bulk Scanner</title>
 <style>
   :root {
-    --bg:#0f172a; --panel:#ffffff; --ink:#0f172a; --muted:#64748b;
-    --line:#e2e8f0; --accent:#4f46e5; --accent-ink:#fff;
+    --bg:#f8fafc; --panel:#ffffff; --ink:#1e293b; --muted:#64748b;
+    --line:#e2e8f0; --accent:#2563eb; --accent-ink:#fff;
     --critical:#ef4444; --serious:#f97316; --moderate:#eab308; --minor:#3b82f6;
     --ok:#10b981;
-    --radius:14px; --shadow:0 10px 30px rgba(15,23,42,.08);
+    --radius:12px; --shadow:none;
   }
   * { box-sizing:border-box; }
   body {
     margin:0; font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     color:var(--ink);
-    background:linear-gradient(160deg,#1e1b4b 0%,#0f172a 55%,#020617 100%);
+    background:var(--bg);
     min-height:100vh;
   }
   .wrap { max-width:980px; margin:0 auto; padding:48px 20px 80px; }
-  header.hero { text-align:center; color:#e2e8f0; margin-bottom:32px; }
-  header.hero h1 { font-size:34px; margin:0 0 10px; letter-spacing:-.02em; }
-  header.hero p { margin:0 auto; max-width:600px; color:#94a3b8; }
+  header.hero { text-align:center; color:var(--ink); margin-bottom:32px; }
+  header.hero h1 { font-size:34px; margin:0 0 10px; letter-spacing:-.02em; color:#0f172a; }
+  header.hero p { margin:0 auto; max-width:600px; color:#475569; }
   header.hero .eyebrow {
     display:inline-block; font-size:12px; letter-spacing:.14em; text-transform:uppercase;
-    color:#a5b4fc; background:rgba(99,102,241,.15); padding:5px 12px; border-radius:999px; margin-bottom:16px;
+    color:#2563eb; background:#eff6ff; border:1px solid #dbeafe; padding:5px 12px; border-radius:999px; margin-bottom:16px;
   }
-  .card { background:var(--panel); border-radius:var(--radius); box-shadow:var(--shadow); padding:28px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:28px; }
   form .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px 20px; }
   .field { display:flex; flex-direction:column; gap:6px; }
   .field.full { grid-column:1 / -1; }
@@ -38,7 +38,8 @@
     font:inherit; padding:11px 13px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink);
     transition:border-color .15s, box-shadow .15s;
   }
-  input:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,70,229,.15); }
+  input[type=text], input[type=url], input[type=number], select { border:1px solid #cbd5e1; }
+  input:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.15); }
   .check { flex-direction:row; align-items:center; gap:10px; }
   .check input { width:18px; height:18px; accent-color:var(--accent); }
   .actions { margin-top:24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
@@ -46,7 +47,7 @@
     font:inherit; font-weight:600; background:var(--accent); color:var(--accent-ink);
     border:0; padding:13px 26px; border-radius:10px; cursor:pointer; transition:transform .05s, background .15s;
   }
-  button.primary:hover { background:#4338ca; }
+  button.primary:hover { background:#1d4ed8; }
   button.primary:active { transform:translateY(1px); }
   button.primary:disabled { opacity:.55; cursor:not-allowed; }
   .note { color:var(--muted); font-size:13px; }
@@ -63,7 +64,7 @@
   @keyframes spin { to { transform:rotate(360deg); } }
   #statusMsg { font-weight:600; }
   .bar { height:10px; background:var(--line); border-radius:999px; overflow:hidden; }
-  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#6366f1,#4f46e5); transition:width .25s; }
+  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#2563eb); transition:width .25s; }
   .counter { font-size:13px; color:var(--muted); margin-top:8px; }
   .log {
     margin-top:16px; max-height:230px; overflow:auto; border:1px solid var(--line); border-radius:10px;
@@ -91,7 +92,7 @@
   iframe.report { width:100%; height:680px; border:1px solid var(--line); border-radius:12px; background:#fff; }
   .errbox { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; padding:14px 16px; border-radius:10px; white-space:pre-wrap; }
   footer { text-align:center; color:#64748b; font-size:13px; margin-top:34px; }
-  footer a { color:#a5b4fc; }
+  footer a { color:#2563eb; }
 </style>
 </head>
 <body>
@@ -99,16 +100,16 @@
   <header class="hero">
     <span class="eyebrow">axe-core · WCAG</span>
     <h1>Accessibility Bulk Scanner</h1>
-    <p>Audit every page of a website against WCAG, driven by its XML sitemap. Enter a sitemap URL, pick your options, and watch the results appear live.</p>
+    <p>Audit every page of a website against WCAG, driven by its XML sitemap. Enter a website address — the sitemap is found automatically — or paste a sitemap URL directly, then watch the results appear live.</p>
   </header>
 
   <div class="card">
     <form id="form">
       <div class="grid">
         <div class="field full">
-          <label for="sitemap">Sitemap URL <span class="hint">— sitemap_index.xml or any child sitemap</span></label>
-          <input type="url" id="sitemap" name="sitemap" required
-                 placeholder="https://example.com/sitemap_index.xml" autocomplete="off" spellcheck="false">
+          <label for="sitemap">Website or sitemap URL <span class="hint">— enter a site address to auto-find its sitemap, or paste a sitemap URL</span></label>
+          <input type="text" id="sitemap" name="sitemap" required
+                 placeholder="example.com  —  or  https://example.com/sitemap_index.xml" autocomplete="off" spellcheck="false">
         </div>
 
         <div class="field">

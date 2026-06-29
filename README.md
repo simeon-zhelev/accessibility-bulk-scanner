@@ -1,8 +1,8 @@
 # Accessibility Bulk Scanner
 
-Audit the accessibility of **every page of a website** against WCAG, driven by its XML sitemap, in parallel — and get a self-contained HTML dashboard + CSV export.
+Audit the accessibility of **every page of a website** against WCAG, driven by its XML sitemap, in parallel — and get a self-contained, **light-themed** HTML dashboard + CSV export.
 
-Works with **WordPress (Yoast SEO)**, **Shopify**, and any site exposing a standard XML sitemap or sitemap index.
+Works with **WordPress (Yoast SEO)**, **Shopify**, and any site exposing a standard XML sitemap or sitemap index. Just give it a website address — it **finds the sitemap automatically** (via `robots.txt` and the usual locations) — or point it straight at a sitemap URL.
 
 ## How it works
 
@@ -20,7 +20,10 @@ axe-core is the same engine inside **Deque axe DevTools**, so the rule set and r
 npm install
 npx playwright install chromium
 
-# 2. Scan a site (WordPress / Yoast)
+# 2a. Easiest — just give it the site URL; the sitemap is auto-discovered
+php accessibility_scanner.php --url=https://example.com --standard=wcag21aa
+
+# 2b. Or point straight at a sitemap (WordPress / Yoast)
 php accessibility_scanner.php \
   --sitemap=https://example.com/sitemap_index.xml \
   --standard=wcag21aa \
@@ -34,11 +37,17 @@ php accessibility_scanner.php \
   --standard=wcag21aa
 ```
 
+> **Auto-discovery:** `--sitemap` and `--url` both accept either a plain site
+> address (e.g. `https://example.com`) or a direct sitemap URL. Given a site
+> address, the scanner reads `robots.txt` for `Sitemap:` directives and then
+> probes common paths (`/sitemap_index.xml`, `/sitemap.xml`, `/wp-sitemap.xml`, …)
+> until it finds a valid sitemap. If discovery fails, pass the sitemap URL directly.
+
 **Tip:** for a first run on a large site, do a trial with `--max-urls=20` to confirm everything works before scanning all pages.
 
 ## Web UI
 
-Prefer a browser to the command line? A small landing page is included in `web/`. It serves a form for the sitemap URL and every scan option, streams **live per-page progress**, and shows the full report inline (plus HTML/CSV downloads) — no command line needed.
+Prefer a browser to the command line? A small, light-themed landing page is included in `web/`. Enter a **website address** (the sitemap is found automatically) or a sitemap URL, pick your options, and it streams **live per-page progress** and shows the full report inline (plus HTML/CSV downloads) — no command line needed.
 
 ```bash
 # Install once (same as above)
@@ -64,7 +73,8 @@ No Composer, no Deque account, no API key.
 
 | Option | Default | Description |
 |---|---|---|
-| `--sitemap` | *(required)* | URL of the sitemap index or any child sitemap |
+| `--sitemap` | *(required)* | A sitemap index, any child sitemap, **or a plain site URL** whose sitemap is auto-discovered |
+| `--url` | — | Alias for `--sitemap`: a site URL to auto-discover the sitemap from |
 | `--standard` | `wcag21aa` | Preset that sets the rule tags: `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`, `section508` |
 | `--tags` | *(see below)* | Explicit axe-core tag list, overrides `--standard` |
 | `--no-best-practice` | off | Drop the `best-practice` tag (test only formal WCAG rules) |
@@ -126,6 +136,8 @@ Cron example — every Monday at 07:00, with dated report files:
 
 **0 URLs found** — confirm the URL returns XML (`curl -I <sitemap-url>`) and that it's a `<sitemapindex>` or `<urlset>` document.
 
+**`Could not find a sitemap`** — auto-discovery checked `robots.txt` and the common paths but found nothing valid. Locate the sitemap yourself (often linked in `robots.txt` or at `/sitemap.xml`) and pass it directly with `--sitemap=<url>`.
+
 **`Call to undefined function curl_init()` / `simplexml_load_string()`** — install the missing PHP extension, e.g. `sudo apt install php-curl php-xml` on Debian/Ubuntu. macOS's built-in PHP includes both.
 
 ## Project structure
@@ -143,7 +155,7 @@ accessibility-bulk-scanner/
 ## Related
 
 Looking for a **PageSpeed / performance** bulk scanner over a sitemap? That's a separate tool:
-[pagespeed-bulk-scanner](https://github.com/simeon-zhelev/pagespeed-bulk-scanner) — same sitemap-driven approach, same dark-themed report style, but measures Core Web Vitals / PageSpeed Insights scores instead of WCAG accessibility.
+[pagespeed-bulk-scanner](https://github.com/simeon-zhelev/pagespeed-bulk-scanner) — same sitemap-driven approach, but measures Core Web Vitals / PageSpeed Insights scores instead of WCAG accessibility.
 
 ## License
 
