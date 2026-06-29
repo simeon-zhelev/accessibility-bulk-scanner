@@ -11,7 +11,7 @@
  *   status   {message}
  *   meta     {total, concurrency, tags, sitemap}
  *   page     {done, total, url, ok, error, counts}
- *   done     {summary, reportUrl, csvUrl}
+ *   done     {summary, reportUrl, csvUrl, pdfUrl}
  *   error    {message}
  */
 
@@ -172,6 +172,7 @@ $generatedAt = date('Y-m-d H:i');
 $id      = date('Ymd-His') . '-' . substr(bin2hex(random_bytes(4)), 0, 6);
 $htmlRel = "reports/{$id}.html";
 $csvRel  = "reports/{$id}.csv";
+$pdfRel  = "reports/{$id}.pdf";
 
 file_put_contents(__DIR__ . '/' . $htmlRel,
     build_html($results, $urlToGroup, $agg, $args['sitemap'],
@@ -179,10 +180,20 @@ file_put_contents(__DIR__ . '/' . $htmlRel,
 file_put_contents(__DIR__ . '/' . $csvRel,
     build_csv($results, $urlToGroup));
 
+// Render a PDF from the HTML report (best-effort; report still works without).
+sse('status', ['message' => 'Rendering the PDF…']);
+$pdfOk = render_pdf(
+    __DIR__ . '/' . $htmlRel,
+    __DIR__ . '/' . $pdfRel,
+    $args['node'],
+    dirname(__DIR__) . '/html-to-pdf.js'
+);
+
 $t = $agg['totals'];
 sse('done', [
     'reportUrl' => $htmlRel,
     'csvUrl'    => $csvRel,
+    'pdfUrl'    => $pdfOk ? $pdfRel : null,
     'summary'   => [
         'pages'           => count($results),
         'pagesWithIssues' => $agg['pagesWithIssues'],

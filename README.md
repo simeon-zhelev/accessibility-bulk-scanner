@@ -1,6 +1,6 @@
 # Accessibility Bulk Scanner
 
-Audit the accessibility of **every page of a website** against WCAG, driven by its XML sitemap, in parallel — and get a self-contained, **light-themed** HTML dashboard + CSV export.
+Audit the accessibility of **every page of a website** against WCAG, driven by its XML sitemap, in parallel — and get a self-contained, **light-themed** HTML dashboard, plus CSV and PDF exports.
 
 Works with **WordPress (Yoast SEO)**, **Shopify**, and any site exposing a standard XML sitemap or sitemap index. Just give it a website address — it **finds the sitemap automatically** (via `robots.txt` and the usual locations) — or point it straight at a sitemap URL.
 
@@ -8,8 +8,9 @@ Works with **WordPress (Yoast SEO)**, **Shopify**, and any site exposing a stand
 
 Accessibility rules only mean anything against a **rendered** page, so this tool is split in two:
 
-- **`accessibility_scanner.php`** — the orchestrator. Crawls the sitemap, drives the scan, aggregates results, and writes the HTML / CSV / console reports. This is the part you run.
+- **`accessibility_scanner.php`** — the orchestrator. Crawls the sitemap, drives the scan, aggregates results, and writes the HTML / CSV / PDF / console reports. This is the part you run.
 - **`axe-runner.js`** — a small headless-browser engine. Launches Chromium (via Playwright) once and runs the open-source **[axe-core](https://github.com/dequelabs/axe-core)** engine against each page, streaming results back to PHP as NDJSON.
+- **`html-to-pdf.js`** — optional PDF helper. Opens the finished HTML report in the same headless Chromium and prints it to PDF (used by `--pdf` and the web UI).
 
 axe-core is the same engine inside **Deque axe DevTools**, so the rule set and results match what you'd see there. **No Deque license or API key is required.** If you later license a commercial runner, you can swap it in with `--runner=PATH` as long as it emits the same NDJSON.
 
@@ -29,7 +30,8 @@ php accessibility_scanner.php \
   --standard=wcag21aa \
   --concurrency=4 \
   --output=report.html \
-  --csv=report.csv
+  --csv=report.csv \
+  --pdf            # also write report.pdf (rendered from the HTML)
 
 # Shopify store
 php accessibility_scanner.php \
@@ -47,7 +49,7 @@ php accessibility_scanner.php \
 
 ## Web UI
 
-Prefer a browser to the command line? A small, light-themed landing page is included in `web/`. Enter a **website address** (the sitemap is found automatically) or a sitemap URL, pick your options, and it streams **live per-page progress** and shows the full report inline (plus HTML/CSV downloads) — no command line needed.
+Prefer a browser to the command line? A small, light-themed landing page is included in `web/`. Enter a **website address** (the sitemap is found automatically) or a sitemap URL, pick your options, and it streams **live per-page progress** and shows the full report inline (plus HTML, PDF and CSV downloads) — no command line needed.
 
 ```bash
 # Install once (same as above)
@@ -85,6 +87,7 @@ No Composer, no Deque account, no API key.
 | `--runner` | `./axe-runner.js` | Path to the axe runner script |
 | `--output` | `accessibility_report.html` | HTML report path |
 | `--csv` | `accessibility_report.csv` | CSV export path |
+| `--pdf[=FILE]` | off | Also export a PDF, rendered from the HTML via headless Chromium. Bare `--pdf` derives the name from `--output` (e.g. `report.pdf`) |
 
 Default tag list when `--standard` is omitted: `wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice`.
 
@@ -145,6 +148,7 @@ Cron example — every Monday at 07:00, with dated report files:
 accessibility-bulk-scanner/
 ├── accessibility_scanner.php   # orchestrator + report generator (run this)
 ├── axe-runner.js               # headless axe-core engine (Playwright)
+├── html-to-pdf.js              # HTML→PDF helper (Playwright; used by --pdf)
 ├── package.json                # Node dependencies
 ├── README.md
 ├── LICENSE                     # MIT

@@ -68,11 +68,12 @@ function parse_args(array $argv): array {
         'runner'      => __DIR__ . '/axe-runner.js',
         'output'      => 'accessibility_report.html',
         'csv'         => 'accessibility_report.csv',
+        'pdf'         => null,         // null = off; set by --pdf[=FILE]
     ];
     $opts = getopt('', [
         'sitemap:', 'url:', 'tags:', 'standard:', 'no-best-practice',
         'max-urls:', 'concurrency:', 'timeout:', 'node:', 'runner:',
-        'output:', 'csv:', 'help',
+        'output:', 'csv:', 'pdf::', 'help',
     ]);
 
     // --url is an alias: pass a site URL and the sitemap is auto-discovered.
@@ -107,6 +108,9 @@ Options:
   --runner=PATH        axe runner script (default: ./axe-runner.js)
   --output=FILE        HTML report path (default: accessibility_report.html)
   --csv=FILE           CSV export path  (default: accessibility_report.csv)
+  --pdf[=FILE]         Also export a PDF (rendered from the HTML via headless
+                       Chromium). Bare --pdf derives the name from --output
+                       (accessibility_report.pdf)
   --help               Show this help
 
 Examples:
@@ -149,6 +153,17 @@ HELP;
         );
         $args['tags'] = implode(',', $parts);
     }
+
+    // --pdf is optional-value: bare --pdf derives the path from --output
+    // (report.html → report.pdf); --pdf=FILE uses the given path.
+    if (isset($opts['pdf'])) {
+        $args['pdf'] = (is_string($opts['pdf']) && $opts['pdf'] !== '')
+            ? $opts['pdf']
+            : preg_replace('/\.html?$/i', '', $args['output']) . '.pdf';
+    } else {
+        $args['pdf'] = null;
+    }
+
     return $args;
 }
 
@@ -932,6 +947,17 @@ function build_html(array $results, array $urlToGroup, array $agg,
   .legend { margin-top: 22px; font-size: 0.72rem; color: #475569; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
   .disclaimer { font-size: 0.72rem; color: #64748b; margin-top: 8px; max-width: 760px; }
+  @media print {
+    body { padding: 0; }
+    a.card, .card, .table-wrap { box-shadow: none; }
+    table.sortable th { cursor: auto; }
+    th.sort-asc::after, th.sort-desc::after { content: ""; }
+    .caret { display: none; }
+    .section-title { break-after: avoid; }
+    tr, .opp-details, .card { break-inside: avoid; }
+    .table-wrap { overflow: visible; }
+    .hint-inline { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -1052,6 +1078,40 @@ function build_csv(array $results, array $urlToGroup): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  PDF export (renders the finished HTML report via headless Chromium)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render an already-written HTML report file to PDF using the Node helper
+ * (html-to-pdf.js), which drives the same headless Chromium as the scan.
+ * Returns true on success; on failure it forwards the helper's stderr and
+ * returns false (the HTML/CSV outputs are unaffected).
+ */
+function render_pdf(string $htmlPath, string $pdfPath, string $node, string $script): bool {
+    if (!is_file($script)) {
+        fwrite(STDERR, "⚠  PDF helper not found at $script\n");
+        return false;
+    }
+    $cmd = implode(' ', array_map('escapeshellarg', [$node, $script, $htmlPath, $pdfPath]));
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = proc_open($cmd, $descriptors, $pipes);
+    if (!is_resource($proc)) {
+        fwrite(STDERR, "⚠  Could not launch Node to render the PDF.\n");
+        return false;
+    }
+    stream_get_contents($pipes[1]);            // drain stdout
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $code = proc_close($proc);
+    if ($code !== 0 || !is_file($pdfPath)) {
+        if ($err !== '') fwrite(STDERR, $err);
+        return false;
+    }
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Console summary
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1127,6 +1187,17 @@ function main(array $argv): void {
     // 5 — CSV
     file_put_contents($args['csv'], build_csv($results, $urlToGroup));
     echo "✅  CSV export  → {$args['csv']}\n";
+
+    // 5b — PDF (optional, rendered from the HTML report)
+    if ($args['pdf']) {
+        echo "🖨  Rendering PDF …\n";
+        $script = dirname($args['runner']) . '/html-to-pdf.js';
+        if (render_pdf($args['output'], $args['pdf'], $args['node'], $script)) {
+            echo "✅  PDF export  → {$args['pdf']}\n";
+        } else {
+            fwrite(STDERR, "⚠  PDF export failed; HTML and CSV were still written.\n");
+        }
+    }
 
     // 6 — Console summary
     print_summary($agg, $results);
