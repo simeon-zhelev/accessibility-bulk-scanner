@@ -103,12 +103,11 @@ Unlike API-based tools there is **no daily quota or rate limit** — everything 
 
 ## Report contents
 
-1. **Issues by Impact** — total element instances flagged as Critical / Serious / Moderate / Minor, plus pages-with-issues, clean pages, and unique failing rules.
+1. **Issues by Impact** — total element instances flagged as Critical / Serious / Moderate / Minor, plus pages-with-issues, clean pages, and unique failing rules. Each impact box links down to the **Results** table.
 2. **By Sitemap Group** — issues per content type (Posts, Pages, Products, Collections, …).
 3. **Top Issues** — every failing rule ranked by pages affected, with impact badge, an affected-pages bar, total elements, and a link to the Deque University fix guide.
 4. **Needs Manual Review** — axe "incomplete" results: things the engine couldn't decide automatically and a human must check.
-5. **Issues Per Page** — collapsible per-URL lists, each rule with its impact, element count and a sample CSS selector.
-6. **Full Results** — every page with its per-impact counts, total, and review count (load failures flagged inline).
+5. **Results** — every page with its per-impact counts, total, and review count (load failures flagged inline). Click any row that has issues to expand an inline list of its violations — each rule with its impact, element count and a sample CSS selector.
 
 The CSV mirrors the per-page data for spreadsheets / BI tools.
 

@@ -611,11 +611,11 @@ function summary_cards(array $agg, int $totalPages): string {
     foreach ($cards as [$label, $n, $color]) {
         $html .= <<<CARD
 
-      <div class="card">
+      <a class="card" href="#results">
         <div class="card-label">$label</div>
         <div class="card-score" style="color:$color">$n</div>
         <div class="card-sub">element instances</div>
-      </div>
+      </a>
 CARD;
     }
     $green = '#15803d';
@@ -748,29 +748,44 @@ function group_breakdown(array $results, array $urlToGroup): string {
 HTML;
 }
 
-function per_page_section(array $results): string {
-    $items = '';
+/**
+ * Unified per-page results table. Every page is one row showing its impact
+ * counts; rows that have violations are clickable and expand an inline detail
+ * row listing each issue (the old "Issues Per Page" view, folded in here).
+ */
+function results_section(array $results, array $urlToGroup): string {
+    $hasGroups = count(array_unique(array_values($urlToGroup))) > 1;
+    $groupHead = $hasGroups ? '<th>Group</th>' : '';
+    $colspan   = $hasGroups ? 9 : 8;   // every column, for the detail row
     $rank = ['critical'=>0,'serious'=>1,'moderate'=>2,'minor'=>3];
+    $rows = '';
+    $i = 0;
     foreach ($results as $r) {
+        $i++;
         $url    = $r['url'];
         $urlEsc = htmlspecialchars($url);
         $short  = htmlspecialchars(preg_replace('#^https?://#', '', $url));
+        $g      = $hasGroups
+            ? '<td class="gname">' . htmlspecialchars($urlToGroup[$url] ?? '') . '</td>' : '';
 
         if (empty($r['ok'])) {
-            $err = htmlspecialchars(mb_substr((string)($r['error'] ?? 'error'), 0, 160));
-            $items .= "\n  <details class=\"opp-details\"><summary>"
-                    . "<a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a> "
-                    . "<span class=\"badge-err\">load error</span></summary>"
-                    . "<div class=\"opp-body\"><div class=\"err-msg\">⚠ $err</div></div></details>";
+            $err = htmlspecialchars(mb_substr((string)($r['error'] ?? 'error'), 0, 120));
+            $rows .= "<tr><td class=\"num\">$i</td>"
+                   . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
+                   . "$g<td colspan=\"6\" style=\"color:#dc2626;font-size:0.72rem;text-align:left\">⚠ $err</td></tr>";
             continue;
         }
 
+        $c = $r['counts'] ?? [];
+        $cell = fn($k, $col) => '<td>' . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
+        $total = (int)($c['violations'] ?? 0);
+        $totColor = $total === 0 ? '#15803d' : '#1e293b';
+
+        // Per-page issue list (shown in the expandable detail row).
         $viol = $r['violations'] ?? [];
-        if (!$viol) continue;
         usort($viol, fn($a, $b) =>
             ($rank[$a['impact']] ?? 9) <=> ($rank[$b['impact']] ?? 9)
             ?: $b['nodeCount'] <=> $a['nodeCount']);
-
         $lis = '';
         foreach ($viol as $v) {
             $help = htmlspecialchars($v['help']);
@@ -787,57 +802,12 @@ function per_page_section(array $results): string {
             $lis .= "<li>" . impact_badge($v['impact']) . " $name$cntS$sample</li>";
         }
 
-        $c = $r['counts'] ?? [];
-        $badges = '';
-        foreach (IMPACTS as $imp) {
-            $n = (int)($c[$imp] ?? 0);
-            if ($n > 0) $badges .= " <span class=\"mini\" style=\"background:"
-                . impact_color($imp) . "\">$n</span>";
-        }
+        $expandable = $total > 0 && $lis !== '';
+        $caret   = $expandable ? '<span class="caret">▸</span>' : '';
+        $rowAttr = $expandable ? ' class="row expandable" onclick="toggleRow(this)"' : '';
 
-        $items .= <<<HTML
-
-  <details class="opp-details">
-    <summary><a href="$urlEsc" target="_blank" rel="noopener">$short</a>$badges</summary>
-    <div class="opp-body"><ul class="opp-list">$lis</ul></div>
-  </details>
-HTML;
-    }
-    if ($items === '') return '';
-    return <<<HTML
-
-<div class="section-title">📝 Issues Per Page</div>
-<div class="opp-container">$items
-</div>
-HTML;
-}
-
-function detail_table(array $results, array $urlToGroup): string {
-    $hasGroups = count(array_unique(array_values($urlToGroup))) > 1;
-    $groupHead = $hasGroups ? '<th>Group</th>' : '';
-    $rows = '';
-    $i = 0;
-    foreach ($results as $r) {
-        $i++;
-        $url    = $r['url'];
-        $urlEsc = htmlspecialchars($url);
-        $short  = htmlspecialchars(preg_replace('#^https?://#', '', $url));
-        $g      = $hasGroups
-            ? '<td class="gname">' . htmlspecialchars($urlToGroup[$url] ?? '') . '</td>' : '';
-
-        if (empty($r['ok'])) {
-            $err = htmlspecialchars(mb_substr((string)($r['error'] ?? 'error'), 0, 120));
-            $rows .= "<tr><td class=\"num\">$i</td>"
-                   . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
-                   . "$g<td colspan=\"6\" style=\"color:#ef4444;font-size:0.72rem;text-align:left\">⚠ $err</td></tr>";
-            continue;
-        }
-        $c = $r['counts'] ?? [];
-        $cell = fn($k, $col) => '<td>' . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
-        $total = (int)($c['violations'] ?? 0);
-        $totColor = $total === 0 ? '#15803d' : '#1e293b';
-        $rows .= "<tr><td class=\"num\">$i</td>"
-               . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
+        $rows .= "<tr$rowAttr><td class=\"num\">$caret$i</td>"
+               . "<td class=\"url-cell\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\" onclick=\"event.stopPropagation()\">$short</a></td>"
                . "$g"
                . $cell('critical', impact_text_color('critical'))
                . $cell('serious',  impact_text_color('serious'))
@@ -845,10 +815,15 @@ function detail_table(array $results, array $urlToGroup): string {
                . $cell('minor',    impact_text_color('minor'))
                . "<td style=\"color:$totColor;font-weight:700\">$total</td>"
                . "<td>" . count_badge((int)($c['incomplete'] ?? 0), '#64748b') . "</td></tr>";
+        if ($expandable) {
+            $rows .= "<tr class=\"detail-row\" hidden><td colspan=\"$colspan\">"
+                   . "<ul class=\"opp-list\">$lis</ul></td></tr>";
+        }
     }
     return <<<HTML
 
-<div class="section-title">📋 Full Results</div>
+<div class="section-title" id="results">📋 Results
+  <span class="hint-inline">— click a row with issues to see the details</span></div>
 <div class="table-wrap">
   <table>
     <thead><tr><th>#</th><th>URL</th>$groupHead
@@ -868,8 +843,7 @@ function build_html(array $results, array $urlToGroup, array $agg,
     $groupHtml = group_breakdown($results, $urlToGroup);
     $topHtml   = top_issues_table($agg, $totalPages);
     $reviewHtml= review_table($agg, $totalPages);
-    $perPage   = per_page_section($results);
-    $detail    = detail_table($results, $urlToGroup);
+    $detail    = results_section($results, $urlToGroup);
     $sitemapEsc= htmlspecialchars($sitemapUrl);
     $tagsEsc   = htmlspecialchars($tags);
     $engineEsc = htmlspecialchars($engine ?? 'axe-core');
@@ -892,6 +866,8 @@ function build_html(array $results, array $urlToGroup, array $agg,
   .cards { display: flex; flex-wrap: wrap; gap: 12px; }
   .card  { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
            padding: 16px 22px; min-width: 148px; flex: 1; }
+  a.card { text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
+  a.card:hover { border-color: #94a3b8; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
   .card-label { font-size: 0.72rem; color: #475569; text-transform: uppercase; letter-spacing: .06em; }
   .card-score { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 4px 0; }
   .card-sub   { font-size: 0.7rem; color: #64748b; }
@@ -908,8 +884,15 @@ function build_html(array $results, array $urlToGroup, array $agg,
   td.url-cell a { color: #1d4ed8; text-decoration: none; }
   td.url-cell a:hover { text-decoration: underline; }
   td.gname { text-align: left; font-size: 0.72rem; color: #475569; white-space: nowrap; }
-  td.num   { color: #94a3b8; width: 32px; }
+  td.num   { color: #94a3b8; width: 44px; white-space: nowrap; }
   tr:hover td { background: #f1f5f9; }
+  tr.expandable { cursor: pointer; }
+  .caret { display: inline-block; margin-right: 4px; color: #94a3b8;
+           font-size: 0.7rem; transition: transform .15s; }
+  tr.open .caret { transform: rotate(90deg); }
+  .detail-row > td { text-align: left; background: #f8fafc; padding: 4px 14px 10px; }
+  .detail-row:hover > td { background: #f8fafc; }
+  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: #94a3b8; }
   td.opp-title { text-align: left; }
   td.opp-title a { color: #1d4ed8; text-decoration: none; }
   td.opp-title a:hover { text-decoration: underline; }
@@ -953,7 +936,6 @@ $cards
 $groupHtml
 $topHtml
 $reviewHtml
-$perPage
 $detail
 
 <div class="legend">
@@ -968,6 +950,14 @@ $detail
     focus-order testing. "Needs review" items in particular require a human decision.
   </div>
 </div>
+<script>
+function toggleRow(tr) {
+  var d = tr.nextElementSibling;
+  if (!d || !d.classList.contains('detail-row')) return;
+  if (d.hasAttribute('hidden')) { d.removeAttribute('hidden'); tr.classList.add('open'); }
+  else { d.setAttribute('hidden', ''); tr.classList.remove('open'); }
+}
+</script>
 </body>
 </html>
 HTML;
