@@ -178,7 +178,7 @@ function http_get(string $url, int $timeout = 30): string {
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS      => 5,
         CURLOPT_TIMEOUT        => $timeout,
-        CURLOPT_USERAGENT      => 'AccessibilityBulkScanner/1.0',
+        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_ENCODING       => '',
     ]);
