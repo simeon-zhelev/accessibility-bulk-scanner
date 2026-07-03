@@ -578,11 +578,11 @@ function aggregate(array $results): array {
 
 function impact_color(?string $impact): string {
     switch ($impact) {
-        case 'critical': return '#ef4444';
-        case 'serious':  return '#f97316';
-        case 'moderate': return '#f59e0b';
-        case 'minor':    return '#3b82f6';
-        default:         return '#94a3b8';
+        case 'critical': return '#cf4a3a';
+        case 'serious':  return '#d97a2b';
+        case 'moderate': return '#d99a2b';
+        case 'minor':    return '#2a78d6';
+        default:         return '#9a958c';
     }
 }
 
@@ -594,11 +594,11 @@ function impact_color(?string $impact): string {
  */
 function impact_text_color(?string $impact): string {
     switch ($impact) {
-        case 'critical': return '#dc2626';
-        case 'serious':  return '#c2410c';
-        case 'moderate': return '#b45309';
-        case 'minor':    return '#2563eb';
-        default:         return '#64748b';
+        case 'critical': return '#c23a2c';
+        case 'serious':  return '#b25f18';
+        case 'moderate': return '#a9761b';
+        case 'minor':    return '#2a78d6';
+        default:         return '#888888';
     }
 }
 
@@ -633,7 +633,7 @@ function summary_cards(array $agg, int $totalPages): string {
       </a>
 CARD;
     }
-    $green = '#15803d';
+    $green = '#24824a';
     $pwi = $agg['pagesWithIssues'];
     $clean = $agg['cleanPages'];
     $rules = $agg['uniqueRules'];
@@ -644,7 +644,7 @@ CARD;
 <div class="section-title">♿ Issues by Impact</div>
 <div class="cards">$html</div>
 <div class="stats">
-  <span><strong style="color:#dc2626">$pwi</strong> / $totalPages pages with issues</span>
+  <span><strong style="color:#c23a2c">$pwi</strong> / $totalPages pages with issues</span>
   <span><strong style="color:$green">$clean</strong> clean pages</span>
   <span><strong>$rules</strong> unique rules failing</span>$errLine
 </div>
@@ -655,7 +655,7 @@ function top_issues_table(array $agg, int $totalPages): string {
     $rules = $agg['rules'];
     if (!$rules) {
         return '<div class="section-title">🏆 Top Issues</div>'
-             . '<p style="color:#15803d;font-size:0.9rem">No automated WCAG '
+             . '<p style="color:#24824a;font-size:0.9rem">No automated WCAG '
              . 'violations detected. Manual testing is still required for full coverage.</p>';
     }
     $rows = '';
@@ -705,7 +705,7 @@ function review_table(array $agg, int $totalPages): string {
         $pct   = round($a['pages'] / max(1, $totalPages) * 100);
         $barW  = max(2, $pct);
         $rows .= "<tr><td class=\"opp-title\">$title<div class=\"rule-id\">$idEsc</div></td>"
-               . "<td><div class=\"pgbar\"><div class=\"pgfill\" style=\"width:{$barW}%;background:#64748b\"></div>"
+               . "<td><div class=\"pgbar\"><div class=\"pgfill\" style=\"width:{$barW}%;background:#888888\"></div>"
                . "<span class=\"pgtext\">{$a['pages']}/{$totalPages} ({$pct}%)</span></div></td>"
                . "<td>{$a['elements']}</td></tr>";
     }
@@ -743,7 +743,7 @@ function group_breakdown(array $results, array $urlToGroup): string {
     foreach ($groups as $g => $d) {
         $gEsc = htmlspecialchars($g);
         $avg  = $d['pages'] ? round($d['violations'] / $d['pages'], 1) : 0;
-        $avgColor = $avg == 0 ? '#15803d' : ($avg <= 5 ? '#b45309' : '#dc2626');
+        $avgColor = $avg == 0 ? '#24824a' : ($avg <= 5 ? '#a9761b' : '#c23a2c');
         $rows .= "<tr><td class=\"gname\">$gEsc</td><td>{$d['pages']}</td>"
                . "<td>{$d['violations']}</td>"
                . "<td>" . count_badge($d['critical'], impact_text_color('critical')) . "</td>"
@@ -788,7 +788,7 @@ function results_section(array $results, array $urlToGroup): string {
             $err = htmlspecialchars(mb_substr((string)($r['error'] ?? 'error'), 0, 120));
             $rows .= "<tr class=\"error-row\"><td class=\"num\" data-sort=\"$i\">$i</td>"
                    . "<td class=\"url-cell\" data-sort=\"$shortLc\"><a href=\"$urlEsc\" target=\"_blank\" rel=\"noopener\">$short</a></td>"
-                   . "$g<td colspan=\"6\" style=\"color:#dc2626;font-size:0.72rem;text-align:left\">⚠ $err</td></tr>";
+                   . "$g<td colspan=\"6\" style=\"color:#c23a2c;font-size:0.72rem;text-align:left\">⚠ $err</td></tr>";
             continue;
         }
 
@@ -797,7 +797,7 @@ function results_section(array $results, array $urlToGroup): string {
             . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
         $total = (int)($c['violations'] ?? 0);
         $incomplete = (int)($c['incomplete'] ?? 0);
-        $totColor = $total === 0 ? '#15803d' : '#1e293b';
+        $totColor = $total === 0 ? '#24824a' : '#1a1a1a';
 
         // Per-page issue list (shown in the expandable detail row).
         $viol = $r['violations'] ?? [];
@@ -832,7 +832,7 @@ function results_section(array $results, array $urlToGroup): string {
                . $cell('moderate', impact_text_color('moderate'))
                . $cell('minor',    impact_text_color('minor'))
                . "<td data-sort=\"$total\" style=\"color:$totColor;font-weight:700\">$total</td>"
-               . "<td data-sort=\"$incomplete\">" . count_badge($incomplete, '#64748b') . "</td></tr>";
+               . "<td data-sort=\"$incomplete\">" . count_badge($incomplete, '#888888') . "</td></tr>";
         if ($expandable) {
             $rows .= "<tr class=\"detail-row\" hidden><td colspan=\"$colspan\">"
                    . "<ul class=\"opp-list\">$lis</ul></td></tr>";
@@ -879,74 +879,74 @@ function build_html(array $results, array $urlToGroup, array $agg,
 <title>Accessibility Report — $generatedAt</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  body  { font-family: system-ui, -apple-system, sans-serif;
-          background: #ffffff; color: #1e293b; margin: 0; padding: 24px 28px; }
-  h1    { font-size: 1.6rem; margin-bottom: 4px; color: #0f172a; }
-  .meta { font-size: 0.8rem; color: #475569; margin-bottom: 22px; line-height: 1.6; }
-  .section-title { font-size: 0.8rem; font-weight: 700; color: #475569;
+  body  { font-family: Helvetica, Arial, system-ui, sans-serif;
+          background: #f7f5f1; color: #1a1a1a; margin: 0; padding: 24px 28px; }
+  h1    { font-size: 1.6rem; margin-bottom: 4px; color: #1a1a1a; }
+  .meta { font-size: 0.8rem; color: #777777; margin-bottom: 22px; line-height: 1.6; }
+  .section-title { font-size: 0.8rem; font-weight: 700; color: #777777;
                    text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; }
-  .card  { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+  .card  { background: #f7f5f1; border: 1px solid #e3ded6; border-radius: 8px;
            padding: 16px 22px; min-width: 148px; flex: 1; }
   a.card { text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
-  a.card:hover { border-color: #94a3b8; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
-  .card-label { font-size: 0.72rem; color: #475569; text-transform: uppercase; letter-spacing: .06em; }
+  a.card:hover { border-color: #9a958c; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
+  .card-label { font-size: 0.72rem; color: #777777; text-transform: uppercase; letter-spacing: .06em; }
   .card-score { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 4px 0; }
-  .card-sub   { font-size: 0.7rem; color: #64748b; }
+  .card-sub   { font-size: 0.7rem; color: #888888; }
   .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px;
-           font-size: 0.85rem; color: #475569; }
-  .table-wrap { overflow-x: auto; border-radius: 10px; background: #ffffff;
-                border: 1px solid #e2e8f0; margin-top: 4px; }
-  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: #1e293b; }
-  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #e2e8f0; }
-  th     { background: #f1f5f9; color: #475569; font-weight: 600;
+           font-size: 0.85rem; color: #777777; }
+  .table-wrap { overflow-x: auto; border-radius: 8px; background: #ffffff;
+                border: 1px solid #e3ded6; margin-top: 4px; }
+  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: #1a1a1a; }
+  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #e3ded6; }
+  th     { background: #f0ede7; color: #777777; font-weight: 600;
            text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
   table.sortable th { cursor: pointer; user-select: none; }
-  table.sortable th:hover { color: #1e293b; }
+  table.sortable th:hover { color: #1a1a1a; }
   th.th-left { text-align: left; }
   th.sort-asc::after  { content: " ▲"; font-size: 0.6rem; opacity: .7; }
   th.sort-desc::after { content: " ▼"; font-size: 0.6rem; opacity: .7; }
   td.url-cell { text-align: left; max-width: 320px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
-  td.url-cell a { color: #1d4ed8; text-decoration: none; }
+  td.url-cell a { color: #2a78d6; text-decoration: none; }
   td.url-cell a:hover { text-decoration: underline; }
-  td.gname { text-align: left; font-size: 0.72rem; color: #475569; white-space: nowrap; }
-  td.num   { color: #94a3b8; width: 44px; white-space: nowrap; }
-  tr:hover td { background: #f1f5f9; }
+  td.gname { text-align: left; font-size: 0.72rem; color: #777777; white-space: nowrap; }
+  td.num   { color: #9a958c; width: 44px; white-space: nowrap; }
+  tr:hover td { background: #f0ede7; }
   tr.expandable { cursor: pointer; }
-  .caret { display: inline-block; margin-right: 4px; color: #94a3b8;
+  .caret { display: inline-block; margin-right: 4px; color: #9a958c;
            font-size: 0.7rem; transition: transform .15s; }
   tr.open .caret { transform: rotate(90deg); }
-  .detail-row > td { text-align: left; background: #f8fafc; padding: 4px 14px 10px; }
-  .detail-row:hover > td { background: #f8fafc; }
-  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: #94a3b8; }
+  .detail-row > td { text-align: left; background: #f7f5f1; padding: 4px 14px 10px; }
+  .detail-row:hover > td { background: #f7f5f1; }
+  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: #9a958c; }
   td.opp-title { text-align: left; }
-  td.opp-title a { color: #1d4ed8; text-decoration: none; }
+  td.opp-title a { color: #2a78d6; text-decoration: none; }
   td.opp-title a:hover { text-decoration: underline; }
-  .rule-id { font-size: 0.66rem; color: #64748b; font-family: ui-monospace, monospace; margin-top: 2px; }
-  .pgbar  { position: relative; background: #f1f5f9; border: 1px solid #e2e8f0;
+  .rule-id { font-size: 0.66rem; color: #888888; font-family: ui-monospace, monospace; margin-top: 2px; }
+  .pgbar  { position: relative; background: #f0ede7; border: 1px solid #e3ded6;
             border-radius: 6px; height: 18px; min-width: 160px; overflow: hidden; }
   .pgfill { height: 100%; border-radius: 6px; opacity: .85; }
   .pgtext { position: absolute; inset: 0; display: flex; align-items: center;
-            justify-content: center; font-size: 0.7rem; color: #1e293b; }
+            justify-content: center; font-size: 0.7rem; color: #1a1a1a; }
   .opp-container { display: flex; flex-direction: column; gap: 6px; }
-  .opp-details   { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; }
+  .opp-details   { background: #f7f5f1; border: 1px solid #e3ded6; border-radius: 8px; padding: 10px 14px; }
   .opp-details summary { cursor: pointer; font-size: 0.82rem; }
-  .opp-details summary a { color: #1d4ed8; text-decoration: none; }
+  .opp-details summary a { color: #2a78d6; text-decoration: none; }
   .opp-details summary a:hover { text-decoration: underline; }
   .opp-body { margin-top: 8px; }
   .opp-list { margin: 4px 0 0; padding-left: 4px; font-size: 0.8rem; list-style: none; }
   .opp-list li { margin: 7px 0; line-height: 1.5; }
-  .opp-savings { color: #b45309; font-size: 0.72rem; }
-  .sel { font-family: ui-monospace, monospace; font-size: 0.68rem; color: #64748b;
+  .opp-savings { color: #a9761b; font-size: 0.72rem; }
+  .sel { font-family: ui-monospace, monospace; font-size: 0.68rem; color: #888888;
          margin: 2px 0 0 6px; word-break: break-all; }
-  .mini { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 10px;
+  .mini { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 8px;
           color: #fff; font-size: 0.68rem; font-weight: 700; margin-left: 4px; }
-  .badge-err { background: #b91c1c; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 0.68rem; }
-  .err-msg { color: #b91c1c; font-size: 0.78rem; }
-  .legend { margin-top: 22px; font-size: 0.72rem; color: #475569; }
+  .badge-err { background: #b23527; color: #fff; padding: 1px 8px; border-radius: 8px; font-size: 0.68rem; }
+  .err-msg { color: #b23527; font-size: 0.78rem; }
+  .legend { margin-top: 22px; font-size: 0.72rem; color: #777777; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
-  .disclaimer { font-size: 0.72rem; color: #64748b; margin-top: 8px; max-width: 760px; }
+  .disclaimer { font-size: 0.72rem; color: #888888; margin-top: 8px; max-width: 760px; }
   @media print {
     body { padding: 0; }
     a.card, .card, .table-wrap { box-shadow: none; }
@@ -977,10 +977,10 @@ $reviewHtml
 $detail
 
 <div class="legend">
-  <span class="dot" style="background:#ef4444"></span> Critical &nbsp;
-  <span class="dot" style="background:#f97316"></span> Serious &nbsp;
-  <span class="dot" style="background:#f59e0b"></span> Moderate &nbsp;
-  <span class="dot" style="background:#3b82f6"></span> Minor
+  <span class="dot" style="background:#cf4a3a"></span> Critical &nbsp;
+  <span class="dot" style="background:#d97a2b"></span> Serious &nbsp;
+  <span class="dot" style="background:#d99a2b"></span> Moderate &nbsp;
+  <span class="dot" style="background:#2a78d6"></span> Minor
   <div class="disclaimer">
     ⚠ Automated checks (axe-core, WAVE, Lighthouse) reliably catch only ~30–40% of
     WCAG success criteria. A clean report is not a compliance certificate — full
