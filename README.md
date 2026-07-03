@@ -56,8 +56,8 @@ Prefer a browser to the command line? A small, light-themed landing page is incl
 npm install
 npx playwright install chromium
 
-# Start the built-in PHP web server, then open http://127.0.0.1:8000
-php -S 127.0.0.1:8000 -t web
+# Start the built-in PHP web server, then open http://127.0.0.1:8081
+php -S 127.0.0.1:8081 -t web
 ```
 
 It reuses the exact same engine as the CLI — `accessibility_scanner.php` + `axe-runner.js` — so results are identical. Generated reports are written to `web/reports/` (git-ignored).
