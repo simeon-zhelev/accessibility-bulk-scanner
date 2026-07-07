@@ -1049,12 +1049,13 @@ function build_csv(array $results, array $urlToGroup): string {
     $fields = ['url','sitemap_group','status','critical','serious','moderate','minor',
                'total_violations','needs_review','top_issues','error'];
     $fh = fopen('php://temp', 'r+');
-    fputcsv($fh, $fields);
+    // Explicit escape: PHP 8.4 deprecates omitting it (default is being removed).
+    fputcsv($fh, $fields, escape: '\\');
     foreach ($results as $r) {
         $url = $r['url'];
         if (empty($r['ok'])) {
             fputcsv($fh, [$url, $urlToGroup[$url] ?? '', 'error',
-                          '', '', '', '', '', '', '', (string)($r['error'] ?? 'error')]);
+                          '', '', '', '', '', '', '', (string)($r['error'] ?? 'error')], escape: '\\');
             continue;
         }
         $c = $r['counts'] ?? [];
@@ -1069,7 +1070,7 @@ function build_csv(array $results, array $urlToGroup): string {
             (int)($c['moderate'] ?? 0), (int)($c['minor'] ?? 0),
             (int)($c['violations'] ?? 0), (int)($c['incomplete'] ?? 0),
             $topStr, '',
-        ]);
+        ], escape: '\\');
     }
     rewind($fh);
     $csv = stream_get_contents($fh);
