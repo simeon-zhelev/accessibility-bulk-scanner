@@ -641,7 +641,7 @@ CARD;
     $errLine = $errs > 0 ? " &nbsp;|&nbsp; ⚠ $errs page(s) failed to load" : '';
 
     return <<<HTML
-<div class="section-title">♿ Issues by Impact</div>
+<div class="section-title">Issues by Impact</div>
 <div class="cards">$html</div>
 <div class="stats">
   <span><strong style="color:#c23a2c">$pwi</strong> / $totalPages pages with issues</span>
@@ -654,7 +654,7 @@ HTML;
 function top_issues_table(array $agg, int $totalPages): string {
     $rules = $agg['rules'];
     if (!$rules) {
-        return '<div class="section-title">🏆 Top Issues</div>'
+        return '<div class="section-title">Top Issues</div>'
              . '<p style="color:#24824a;font-size:0.9rem">No automated WCAG '
              . 'violations detected. Manual testing is still required for full coverage.</p>';
     }
@@ -678,7 +678,7 @@ function top_issues_table(array $agg, int $totalPages): string {
     }
     return <<<HTML
 
-<div class="section-title">🏆 Top Issues (by pages affected)</div>
+<div class="section-title">Top Issues (by pages affected)</div>
 <div class="table-wrap" style="margin-top:10px">
   <table>
     <thead>
@@ -711,7 +711,7 @@ function review_table(array $agg, int $totalPages): string {
     }
     return <<<HTML
 
-<div class="section-title">🔎 Needs Manual Review (axe could not decide)</div>
+<div class="section-title">Needs Manual Review (axe could not decide)</div>
 <div class="table-wrap" style="margin-top:10px">
   <table>
     <thead><tr><th style="text-align:left">Check</th>
@@ -752,7 +752,7 @@ function group_breakdown(array $results, array $urlToGroup): string {
     }
     return <<<HTML
 
-<div class="section-title">📂 By Sitemap Group</div>
+<div class="section-title">By Sitemap Group</div>
 <div class="table-wrap" style="margin-top:10px">
   <table>
     <thead><tr><th>Sitemap group</th><th>Pages</th><th>Total issues</th>
@@ -840,7 +840,7 @@ function results_section(array $results, array $urlToGroup): string {
     }
     return <<<HTML
 
-<div class="section-title" id="results">📋 Results
+<div class="section-title" id="results">Results
   <span class="hint-inline">— click a row with issues to see the details, or a column header to sort</span></div>
 <div class="table-wrap">
   <table class="sortable">
@@ -877,78 +877,102 @@ function build_html(array $results, array $urlToGroup, array $agg,
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Accessibility Report — $generatedAt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  /* ── Website Health Check report theme (teal) ── */
+  :root {
+    --ink: #0F1E33; --body: #33415C; --muted: #64748B; --soft: #94A3B8;
+    --line: #E6EAF1; --line-strong: #C9D4E5; --bg: #ffffff; --bg-soft: #F5F7FA;
+    --accent: #0D8A7E; --accent-tint: #E6F4F2; --accent-line: #BFE3DE;
+    --good: #1F9D5B; --warn: #E3A11F; --bad: #D64541;
+  }
   *, *::before, *::after { box-sizing: border-box; }
-  body  { font-family: Helvetica, Arial, system-ui, sans-serif;
-          background: #f7f5f1; color: #1a1a1a; margin: 0; padding: 24px 28px; }
-  h1    { font-size: 1.6rem; margin-bottom: 4px; color: #1a1a1a; }
-  .meta { font-size: 0.8rem; color: #777777; margin-bottom: 22px; line-height: 1.6; }
-  .section-title { font-size: 0.8rem; font-weight: 700; color: #777777;
-                   text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
+  body  { font-family: 'IBM Plex Sans', system-ui, Helvetica, Arial, sans-serif;
+          background: var(--bg-soft); color: var(--body); margin: 0; padding: 0 28px 40px;
+          line-height: 1.55; }
+  .brandbar { display: flex; align-items: center; gap: 14px; padding: 18px 0 16px;
+              margin-bottom: 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .brandbar .logo { width: 30px; height: 30px; border-radius: 50%; flex: none;
+    background: conic-gradient(var(--good) 0 76%, var(--line) 76% 100%);
+    display: grid; place-items: center; }
+  .brandbar .logo::before { content: ''; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--bg-soft); }
+  .brandbar .brandname { font-family: 'Space Grotesk', sans-serif; font-weight: 700;
+    font-size: 17px; color: var(--ink); }
+  .brandbar .brandctx { color: var(--soft); font-size: 13px; }
+  .brandbar .sp { flex: 1; }
+  h1    { font-family: 'Space Grotesk', sans-serif; font-size: 1.6rem; margin: 6px 0 4px; color: var(--ink); }
+  .meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 22px; line-height: 1.6; }
+  .meta strong { color: var(--ink); }
+  .section-title { font-family: 'Space Grotesk', sans-serif; font-size: 0.8rem; font-weight: 700;
+                   color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; }
-  .card  { background: #f7f5f1; border: 1px solid #e3ded6; border-radius: 8px;
+  .card  { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
            padding: 16px 22px; min-width: 148px; flex: 1; }
   a.card { text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
-  a.card:hover { border-color: #9a958c; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
-  .card-label { font-size: 0.72rem; color: #777777; text-transform: uppercase; letter-spacing: .06em; }
-  .card-score { font-size: 2.4rem; font-weight: 700; line-height: 1.1; margin: 4px 0; }
-  .card-sub   { font-size: 0.7rem; color: #888888; }
+  a.card:hover { border-color: var(--accent-line); box-shadow: 0 2px 10px rgba(13,138,126,.12); }
+  .card-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .card-score { font-family: 'Space Grotesk', sans-serif; font-size: 2.4rem; font-weight: 700;
+                line-height: 1.1; margin: 4px 0; color: var(--ink); }
+  .card-sub   { font-size: 0.7rem; color: var(--soft); }
   .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px;
-           font-size: 0.85rem; color: #777777; }
-  .table-wrap { overflow-x: auto; border-radius: 8px; background: #ffffff;
-                border: 1px solid #e3ded6; margin-top: 4px; }
-  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: #1a1a1a; }
-  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #e3ded6; }
-  th     { background: #f0ede7; color: #777777; font-weight: 600;
+           font-size: 0.85rem; color: var(--muted); }
+  .table-wrap { overflow-x: auto; border-radius: 12px; background: var(--bg);
+                border: 1px solid var(--line); margin-top: 4px; }
+  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: var(--body); }
+  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--line); }
+  th     { background: var(--bg-soft); color: var(--muted); font-weight: 600;
            text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
   table.sortable th { cursor: pointer; user-select: none; }
-  table.sortable th:hover { color: #1a1a1a; }
+  table.sortable th:hover { color: var(--accent); }
   th.th-left { text-align: left; }
   th.sort-asc::after  { content: " ▲"; font-size: 0.6rem; opacity: .7; }
   th.sort-desc::after { content: " ▼"; font-size: 0.6rem; opacity: .7; }
   td.url-cell { text-align: left; max-width: 320px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
-  td.url-cell a { color: #2a78d6; text-decoration: none; }
+  td.url-cell a { color: var(--accent); text-decoration: none; }
   td.url-cell a:hover { text-decoration: underline; }
-  td.gname { text-align: left; font-size: 0.72rem; color: #777777; white-space: nowrap; }
-  td.num   { color: #9a958c; width: 44px; white-space: nowrap; }
-  tr:hover td { background: #f0ede7; }
+  td.gname { text-align: left; font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+  td.num   { color: var(--soft); width: 44px; white-space: nowrap; }
+  tr:hover td { background: var(--accent-tint); }
   tr.expandable { cursor: pointer; }
-  .caret { display: inline-block; margin-right: 4px; color: #9a958c;
+  .caret { display: inline-block; margin-right: 4px; color: var(--accent);
            font-size: 0.7rem; transition: transform .15s; }
   tr.open .caret { transform: rotate(90deg); }
-  .detail-row > td { text-align: left; background: #f7f5f1; padding: 4px 14px 10px; }
-  .detail-row:hover > td { background: #f7f5f1; }
-  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: #9a958c; }
+  .detail-row > td { text-align: left; background: var(--bg-soft); padding: 4px 14px 10px; }
+  .detail-row:hover > td { background: var(--bg-soft); }
+  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--soft); }
   td.opp-title { text-align: left; }
-  td.opp-title a { color: #2a78d6; text-decoration: none; }
+  td.opp-title a { color: var(--accent); text-decoration: none; }
   td.opp-title a:hover { text-decoration: underline; }
-  .rule-id { font-size: 0.66rem; color: #888888; font-family: ui-monospace, monospace; margin-top: 2px; }
-  .pgbar  { position: relative; background: #f0ede7; border: 1px solid #e3ded6;
+  .rule-id { font-size: 0.66rem; color: var(--soft); font-family: 'IBM Plex Mono', ui-monospace, monospace; margin-top: 2px; }
+  .pgbar  { position: relative; background: var(--bg-soft); border: 1px solid var(--line);
             border-radius: 6px; height: 18px; min-width: 160px; overflow: hidden; }
   .pgfill { height: 100%; border-radius: 6px; opacity: .85; }
   .pgtext { position: absolute; inset: 0; display: flex; align-items: center;
-            justify-content: center; font-size: 0.7rem; color: #1a1a1a; }
+            justify-content: center; font-size: 0.7rem; color: var(--ink); }
   .opp-container { display: flex; flex-direction: column; gap: 6px; }
-  .opp-details   { background: #f7f5f1; border: 1px solid #e3ded6; border-radius: 8px; padding: 10px 14px; }
+  .opp-details   { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
   .opp-details summary { cursor: pointer; font-size: 0.82rem; }
-  .opp-details summary a { color: #2a78d6; text-decoration: none; }
+  .opp-details summary a { color: var(--accent); text-decoration: none; }
   .opp-details summary a:hover { text-decoration: underline; }
   .opp-body { margin-top: 8px; }
   .opp-list { margin: 4px 0 0; padding-left: 4px; font-size: 0.8rem; list-style: none; }
   .opp-list li { margin: 7px 0; line-height: 1.5; }
-  .opp-savings { color: #a9761b; font-size: 0.72rem; }
-  .sel { font-family: ui-monospace, monospace; font-size: 0.68rem; color: #888888;
+  .opp-savings { color: var(--warn); font-size: 0.72rem; }
+  .sel { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.68rem; color: var(--soft);
          margin: 2px 0 0 6px; word-break: break-all; }
   .mini { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 8px;
           color: #fff; font-size: 0.68rem; font-weight: 700; margin-left: 4px; }
-  .badge-err { background: #b23527; color: #fff; padding: 1px 8px; border-radius: 8px; font-size: 0.68rem; }
-  .err-msg { color: #b23527; font-size: 0.78rem; }
-  .legend { margin-top: 22px; font-size: 0.72rem; color: #777777; }
+  .badge-err { background: var(--bad); color: #fff; padding: 1px 8px; border-radius: 8px; font-size: 0.68rem; }
+  .err-msg { color: var(--bad); font-size: 0.78rem; }
+  .legend { margin-top: 22px; font-size: 0.72rem; color: var(--muted); }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
-  .disclaimer { font-size: 0.72rem; color: #888888; margin-top: 8px; max-width: 760px; }
+  .disclaimer { font-size: 0.72rem; color: var(--soft); margin-top: 8px; max-width: 760px; }
   @media print {
-    body { padding: 0; }
+    body { padding: 0; background: #fff; }
     a.card, .card, .table-wrap { box-shadow: none; }
     table.sortable th { cursor: auto; }
     th.sort-asc::after, th.sort-desc::after { content: ""; }
@@ -961,7 +985,13 @@ function build_html(array $results, array $urlToGroup, array $agg,
 </style>
 </head>
 <body>
-<h1>♿ Accessibility Bulk Report</h1>
+<header class="brandbar">
+  <span class="logo"></span>
+  <span class="brandname">Website Health Check</span>
+  <span class="sp"></span>
+  <span class="brandctx">Accessibility report · powered by 2create</span>
+</header>
+<h1>Accessibility Bulk Report</h1>
 <div class="meta">
   Sitemap: <strong>$sitemapEsc</strong> &nbsp;|&nbsp;
   Pages tested: <strong>$totalPages</strong> &nbsp;|&nbsp;
