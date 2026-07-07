@@ -1090,10 +1090,10 @@ function build_csv(array $results, array $urlToGroup): string {
         }
         $c = $r['counts'] ?? [];
         $top = array_slice($r['violations'] ?? [], 0, 8);
-        $topStr = implode(' | ', array_map(function ($v) {
-            $n = (int)($v['nodeCount'] ?? 1);
-            return $n > 1 ? "{$v['help']} ({$n})" : $v['help'];
-        }, $top));
+        // Emit the stable axe rule id (e.g. "image-alt"), not the help text: the
+        // platform tallies pages-affected per rule and maps ids to plain-language
+        // sentences. A per-page node-count suffix would fragment that tally.
+        $topStr = implode(' | ', array_map(fn ($v) => $v['id'], $top));
         fputcsv($fh, [
             $url, $urlToGroup[$url] ?? '', 'ok',
             (int)($c['critical'] ?? 0), (int)($c['serious'] ?? 0),
