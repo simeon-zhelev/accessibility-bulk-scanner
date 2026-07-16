@@ -410,7 +410,7 @@ function preflight(array $args): void {
  * Launch the Node runner once and stream back NDJSON.
  * Returns [results(map url=>row), engineVersion].
  */
-function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEvent = null): array {
+function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEvent = null, ?callable $shouldStop = null): array {
     $payload = [];
     foreach ($urls as $u) {
         $payload[] = ['url' => $u, 'group' => $urlToGroup[$u] ?? null];
@@ -448,6 +448,7 @@ function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEven
     $results = [];
     $engine  = null;
     $buf     = '';
+    $stopped = false;
     $open    = [1 => $pipes[1], 2 => $pipes[2]];
 
     $handleLine = function (string $line) use (&$results, &$engine, $onEvent): void {
@@ -473,6 +474,11 @@ function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEven
     };
 
     while ($open) {
+        if ($shouldStop && $shouldStop()) {
+            $stopped = true;
+            proc_terminate($proc);
+            break;
+        }
         $read = $open; $w = null; $e = null;
         if (@stream_select($read, $w, $e, 1, 0) === false) break;
         foreach ($read as $stream) {
@@ -497,13 +503,17 @@ function scan_all(array $urls, array $urlToGroup, array $args, ?callable $onEven
     }
     if ($buf !== '') $handleLine($buf);
 
+    // If we terminated the runner on a stop request, close its pipes so
+    // proc_close() doesn't block waiting on the (now killed) child.
+    foreach ($open as $stream) { @fclose($stream); }
+
     $code = proc_close($proc);
     @unlink($tmp);
-    if ($code !== 0 && !$results) {
+    if (!$stopped && $code !== 0 && !$results) {
         fwrite(STDERR, "❌  Runner exited with code $code and produced no results.\n");
         exit(1);
     }
-    return [$results, $engine];
+    return [$results, $engine, $stopped];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
