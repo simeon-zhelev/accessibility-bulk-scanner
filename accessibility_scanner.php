@@ -58,7 +58,7 @@ function parse_args(array $argv): array {
     $defaults = [
         'sitemap'     => null,
         'url'         => null,         // site URL — sitemap is auto-discovered
-        'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
+        'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice',
         'standard'    => null,         // shortcut that overrides --tags
         'no-best-practice' => false,
         'max-urls'    => null,
@@ -96,10 +96,10 @@ Options:
   --url=URL            Alias for --sitemap; a site URL whose sitemap is
                        auto-discovered via robots.txt + common paths
   --standard=S         Convenience preset, sets --tags:
-                         wcag2a | wcag2aa | wcag21a | wcag21aa (default) |
-                         wcag22aa | section508
+                         wcag2a | wcag2aa | wcag21a | wcag21aa |
+                         wcag22aa (default) | section508
   --tags=LIST          Explicit axe-core tag list, comma-separated
-                       (default: wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice)
+                       (default: wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice)
   --no-best-practice   Drop the 'best-practice' tag (WCAG rules only)
   --max-urls=N         Cap total pages scanned (great for a trial run)
   --concurrency=N      Pages scanned in parallel (default: 4)
