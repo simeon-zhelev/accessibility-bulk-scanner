@@ -101,6 +101,28 @@
   button.primary:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
   .note { color:var(--muted); font-size:13px; }
 
+  /* collapsed form — shown while a scan runs and after it finishes */
+  .formSummary { display:none; align-items:center; gap:12px; }
+  form.minimized .grid, form.minimized .actions { display:none; }
+  form.minimized .formSummary { display:flex; }
+  .formSummary .label { flex:none; font-family:'Poppins', sans-serif; font-weight:600; font-size:14px; color:var(--ink); }
+  .formSummary .target {
+    flex:1; min-width:0; color:var(--body);
+    font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:13px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  button.editBtn {
+    margin-left:auto; flex:none; cursor:pointer;
+    font-family:'Poppins', sans-serif; font-weight:600; font-size:13px;
+    background:#fff; color:var(--accent); border:1px solid var(--accent-line);
+    padding:9px 18px; border-radius:999px; transition:background .15s, border-color .15s;
+  }
+  button.editBtn:hover { background:var(--accent-tint); border-color:var(--accent); }
+  @media (max-width:640px) {
+    .formSummary { flex-wrap:wrap; }
+    .formSummary .target { flex-basis:100%; order:3; }
+  }
+
   /* progress + results */
   #run { display:none; margin-top:26px; }
   #run.active { display:block; }
@@ -164,6 +186,12 @@
 
   <div class="card">
     <form id="form">
+      <div class="formSummary" id="formSummary">
+        <span class="label" id="scanLabel">Scanning</span>
+        <span class="target" id="scanTarget"></span>
+        <button type="button" class="editBtn" id="editBtn">Edit &amp; rescan</button>
+      </div>
+
       <div class="grid">
         <div class="field full">
           <label for="sitemap">Website or sitemap URL <span class="hint">— enter a site address to auto-find its sitemap, or paste a sitemap URL</span></label>
@@ -240,6 +268,9 @@
 const form = document.getElementById('form');
 const runEl = document.getElementById('run');
 const submitBtn = document.getElementById('submitBtn');
+const editBtn = document.getElementById('editBtn');
+const scanLabel = document.getElementById('scanLabel');
+const scanTarget = document.getElementById('scanTarget');
 const spinner = document.getElementById('spinner');
 const statusMsg = document.getElementById('statusMsg');
 const stopBtn = document.getElementById('stopBtn');
@@ -260,6 +291,11 @@ let stopping = false;
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   if (es) es.close();
+
+  // collapse the form so the live progress takes over the card
+  scanLabel.textContent = 'Scanning';
+  scanTarget.textContent = document.getElementById('sitemap').value.trim();
+  form.classList.add('minimized');
 
   // reset UI
   runEl.classList.add('active');
@@ -313,6 +349,7 @@ form.addEventListener('submit', (e) => {
   es.addEventListener('done', (ev) => {
     const d = JSON.parse(ev.data);
     finish();
+    scanLabel.textContent = d.stopped ? 'Stopped' : 'Scanned';
     statusMsg.textContent = d.stopped
       ? `Scan stopped — report covers the ${d.summary.pages} page${d.summary.pages === 1 ? '' : 's'} scanned so far.`
       : 'Scan complete.';
@@ -332,6 +369,12 @@ form.addEventListener('submit', (e) => {
       showError('The connection to the scanner was lost. Check the server console for details.');
     }
   });
+});
+
+// Expand the form again so settings can be changed / a new scan started.
+editBtn.addEventListener('click', () => {
+  form.classList.remove('minimized');
+  document.getElementById('sitemap').focus();
 });
 
 stopBtn.addEventListener('click', () => {
@@ -435,6 +478,7 @@ function renderActions(d) {
 
 function showError(msg) {
   finish();
+  scanLabel.textContent = 'Scan failed';
   statusMsg.textContent = 'Scan failed.';
   errorEl.textContent = msg;
   errorEl.hidden = false;
