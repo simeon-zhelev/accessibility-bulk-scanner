@@ -35,10 +35,10 @@
     box-shadow:0 8px 20px rgba(13,138,126,.18);
   }
   header.hero h1 {
-    font-family:'Poppins', sans-serif; font-weight:700; font-size:44px;
+    font-family:'Poppins', sans-serif; font-weight:700; font-size:clamp(30px, 6.5vw, 44px);
     margin:0 0 14px; letter-spacing:-.02em; color:var(--ink); line-height:1.05;
   }
-  header.hero p { margin:0 auto; max-width:560px; font-size:18px; color:var(--muted); }
+  header.hero p { margin:0 auto; max-width:560px; font-size:clamp(16px, 3.6vw, 18px); color:var(--muted); }
   header.hero .eyebrow {
     display:inline-block; font-family:'Poppins', sans-serif; font-size:12px; font-weight:600;
     letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
@@ -174,6 +174,39 @@
   .errbox { background:#FBEEEB; border:1px solid #E7C3BC; color:#8A2E20; padding:14px 16px; border-radius:var(--radius-sm); white-space:pre-wrap; }
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:34px; }
   footer a { color:var(--accent); }
+
+  /* ── Mobile ──────────────────────────────────────────────────────────────── */
+  @media (max-width:640px) {
+    .wrap { padding:36px 14px 56px; }
+    header.hero { margin-bottom:24px; }
+    header.hero::before { width:56px; height:56px; margin-bottom:18px; font-size:26px; }
+    header.hero .eyebrow { margin-bottom:14px; }
+
+    .card { padding:20px; border-radius:16px; }
+    form .grid { grid-template-columns:1fr; gap:16px; }   /* single column */
+    #sitemap { padding:14px 15px; }
+
+    /* full-width primary action for an easy tap target */
+    .actions { margin-top:20px; flex-direction:column; align-items:stretch; gap:12px; }
+    .actions .note { text-align:center; }
+    button.primary { width:100%; padding:15px 20px; }
+
+    /* keep the Stop button on its own line, right-aligned */
+    .statusbar { flex-wrap:wrap; }
+    button.stop { margin-left:auto; }
+
+    .summary { grid-template-columns:1fr 1fr; }           /* two stats per row */
+
+    /* stacked, full-width download/report buttons */
+    .resultActions { flex-direction:column; }
+    .resultActions a.btn { text-align:center; }
+
+    iframe.report { height:70vh; min-height:420px; }
+  }
+
+  @media (max-width:340px) {
+    .summary { grid-template-columns:1fr; }               /* one stat per row */
+  }
 </style>
 </head>
 <body>
@@ -202,11 +235,11 @@
         <div class="field">
           <label for="standard">WCAG standard</label>
           <select id="standard" name="standard">
-            <option value="wcag21aa" selected>WCAG 2.1 AA (recommended)</option>
+            <option value="wcag22aa" selected>WCAG 2.2 AA (recommended)</option>
+            <option value="wcag21aa">WCAG 2.1 AA</option>
             <option value="wcag2a">WCAG 2.0 A</option>
             <option value="wcag2aa">WCAG 2.0 AA</option>
             <option value="wcag21a">WCAG 2.1 A</option>
-            <option value="wcag22aa">WCAG 2.2 AA</option>
             <option value="section508">Section 508</option>
           </select>
         </div>
