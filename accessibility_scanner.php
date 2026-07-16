@@ -85,11 +85,13 @@ function parse_args(array $argv): array {
         'output'      => 'accessibility_report.html',
         'csv'         => 'accessibility_report.csv',
         'pdf'         => null,         // null = off; set by --pdf[=FILE]
+        'snapshot'    => null,         // JSON snapshot path; set by --snapshot[=FILE]
+        'compare'     => null,         // baseline snapshot to diff against
     ];
     $opts = getopt('', [
         'sitemap:', 'url:', 'crawl', 'crawl-depth:', 'tags:', 'standard:',
         'no-best-practice', 'max-urls:', 'concurrency:', 'timeout:', 'node:',
-        'runner:', 'output:', 'csv:', 'pdf::', 'help',
+        'runner:', 'output:', 'csv:', 'pdf::', 'snapshot::', 'compare:', 'help',
     ]);
 
     // --url is an alias: pass a site URL and the sitemap is auto-discovered.
@@ -132,6 +134,12 @@ Options:
   --pdf[=FILE]         Also export a PDF (rendered from the HTML via headless
                        Chromium). Bare --pdf derives the name from --output
                        (accessibility_report.pdf)
+  --snapshot[=FILE]    Write a machine-readable JSON snapshot for tracking
+                       improvement over time (default: derived from --output,
+                       e.g. accessibility_report.json). Pass --snapshot= (empty)
+                       is not supported; give a path or omit for the default.
+  --compare=FILE       Diff this run against a previous snapshot JSON and add a
+                       "Changes since baseline" section (fixed / new / net delta)
   --help               Show this help
 
 Examples:
@@ -186,6 +194,16 @@ HELP;
     } else {
         $args['pdf'] = null;
     }
+
+    // --snapshot is optional-value: bare --snapshot derives from --output
+    // (report.html → report.json); --snapshot=FILE uses the given path. A JSON
+    // snapshot is always useful for tracking, so it defaults ON.
+    if (isset($opts['snapshot']) && is_string($opts['snapshot']) && $opts['snapshot'] !== '') {
+        $args['snapshot'] = $opts['snapshot'];
+    } else {
+        $args['snapshot'] = preg_replace('/\.html?$/i', '', $args['output']) . '.json';
+    }
+    $args['compare'] = isset($opts['compare']) ? (string)$opts['compare'] : null;
 
     return $args;
 }
@@ -771,6 +789,123 @@ function aggregate(array $results): array {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Snapshots + comparison (measure improvement between two runs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A stable, machine-readable snapshot of a run — the durable record used to
+ * diff two scans. $meta carries run context (generatedAt, sitemap, tags,
+ * engine, pages).
+ */
+function build_snapshot(array $agg, array $meta): array {
+    $t   = $agg['totals'];
+    $cat = $agg['catTotals'] ?? [];
+
+    $rules = [];
+    foreach (($agg['rules'] ?? []) as $id => $a) {
+        $rules[$id] = [
+            'help'     => $a['help'],
+            'impact'   => $a['impact'],
+            'category' => $a['category'] ?? rule_category($id),
+            'pages'    => (int)$a['pages'],
+            'elements' => (int)$a['elements'],
+        ];
+    }
+
+    $cats = [];
+    foreach (['code', 'design'] as $c) {
+        $x = $cat[$c] ?? [];
+        $cats[$c] = [
+            'critical'        => (int)($x['critical'] ?? 0),
+            'serious'         => (int)($x['serious'] ?? 0),
+            'moderate'        => (int)($x['moderate'] ?? 0),
+            'minor'           => (int)($x['minor'] ?? 0),
+            'violations'      => (int)($x['violations'] ?? 0),
+            'uniqueRules'     => (int)($x['uniqueRules'] ?? 0),
+            'pagesWithIssues' => (int)($x['pagesWithIssues'] ?? 0),
+        ];
+    }
+
+    return [
+        'schema'          => 1,
+        'generatedAt'     => (string)($meta['generatedAt'] ?? ''),
+        'sitemap'         => (string)($meta['sitemap'] ?? ''),
+        'tags'            => (string)($meta['tags'] ?? ''),
+        'engine'          => $meta['engine'] ?? null,
+        'pages'           => (int)($meta['pages'] ?? 0),
+        'pagesWithIssues' => (int)$agg['pagesWithIssues'],
+        'cleanPages'      => (int)$agg['cleanPages'],
+        'errorPages'      => (int)$agg['errorPages'],
+        'totals'          => [
+            'critical'   => (int)$t['critical'], 'serious' => (int)$t['serious'],
+            'moderate'   => (int)$t['moderate'], 'minor'   => (int)$t['minor'],
+            'violations' => (int)$t['violations'], 'incomplete' => (int)$t['incomplete'],
+        ],
+        'categories'      => $cats,
+        'rules'           => $rules,
+    ];
+}
+
+/**
+ * Diff two snapshots (baseline vs current). Returns per-category deltas and a
+ * per-rule status map: fixed | new | improved | worse | unchanged.
+ */
+function compare_snapshots(array $base, array $cur): array {
+    $catDelta = [];
+    foreach (['code', 'design'] as $c) {
+        $b = (int)($base['categories'][$c]['violations'] ?? 0);
+        $n = (int)($cur['categories'][$c]['violations'] ?? 0);
+        $rb = (int)($base['categories'][$c]['uniqueRules'] ?? 0);
+        $rn = (int)($cur['categories'][$c]['uniqueRules'] ?? 0);
+        $catDelta[$c] = [
+            'base' => $b, 'cur' => $n, 'delta' => $n - $b,
+            'rulesBase' => $rb, 'rulesCur' => $rn, 'rulesDelta' => $rn - $rb,
+        ];
+    }
+
+    $baseRules = $base['rules'] ?? [];
+    $curRules  = $cur['rules'] ?? [];
+    $ids = array_unique(array_merge(array_keys($baseRules), array_keys($curRules)));
+    $counts = ['fixed'=>0, 'new'=>0, 'improved'=>0, 'worse'=>0, 'unchanged'=>0];
+    $rules = [];
+    foreach ($ids as $id) {
+        $b = $baseRules[$id] ?? null;
+        $n = $curRules[$id] ?? null;
+        $be = $b ? (int)$b['elements'] : 0;
+        $ne = $n ? (int)$n['elements'] : 0;
+        if     ($b && !$n) $status = 'fixed';
+        elseif (!$b && $n) $status = 'new';
+        elseif ($ne < $be) $status = 'improved';
+        elseif ($ne > $be) $status = 'worse';
+        else               $status = 'unchanged';
+        $counts[$status]++;
+        $rules[$id] = [
+            'help'     => $n['help'] ?? $b['help'] ?? $id,
+            'impact'   => $n['impact'] ?? $b['impact'] ?? null,
+            'category' => $n['category'] ?? $b['category'] ?? rule_category($id),
+            'base'     => $be, 'cur' => $ne, 'delta' => $ne - $be,
+            'status'   => $status,
+        ];
+    }
+    // Order: changed rules first (fixed, worse, new, improved), then unchanged;
+    // within that, by magnitude of change.
+    $rank = ['fixed'=>0, 'worse'=>1, 'new'=>2, 'improved'=>3, 'unchanged'=>4];
+    uasort($rules, fn($a, $b) =>
+        ($rank[$a['status']] <=> $rank[$b['status']])
+        ?: (abs($b['delta']) <=> abs($a['delta'])));
+
+    return [
+        'baseGeneratedAt' => (string)($base['generatedAt'] ?? ''),
+        'baseSitemap'     => (string)($base['sitemap'] ?? ''),
+        'categories'      => $catDelta,
+        'totalsDelta'     => (int)($cur['totals']['violations'] ?? 0)
+                           - (int)($base['totals']['violations'] ?? 0),
+        'ruleCounts'      => $counts,
+        'rules'           => $rules,
+    ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  HTML report helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1102,6 +1237,65 @@ function results_section(array $results, array $urlToGroup, string $category): s
 HTML;
 }
 
+/** "Changes since baseline" block, rendered above the tabs when comparing. */
+function comparison_section(array $diff): string {
+    $fmtDelta = function (int $d): string {
+        if ($d < 0) return '<span class="delta good">▼ ' . abs($d) . '</span>';
+        if ($d > 0) return '<span class="delta bad">▲ ' . $d . '</span>';
+        return '<span class="delta flat">±0</span>';
+    };
+    $tile = function (string $label, array $d) use ($fmtDelta): string {
+        $delta = $fmtDelta((int)$d['delta']);
+        return "<div class=\"diff-tile\"><div class=\"rm-label\">$label</div>"
+             . "<div class=\"diff-nums\"><span class=\"was\">{$d['base']}</span>"
+             . "<span class=\"arrow\">→</span><strong>{$d['cur']}</strong> $delta</div></div>";
+    };
+
+    $codeTile   = $tile('Code issues (in scope)', $diff['categories']['code']);
+    $designTile = $tile('Design issues', $diff['categories']['design']);
+    $c = $diff['ruleCounts'];
+    $baseLabel = htmlspecialchars($diff['baseGeneratedAt'] !== '' ? $diff['baseGeneratedAt'] : 'the baseline');
+
+    $rows = '';
+    foreach ($diff['rules'] as $id => $r) {
+        if ($r['status'] === 'unchanged') continue;
+        $idEsc = htmlspecialchars($id);
+        $help  = htmlspecialchars($r['help']);
+        $catBadge = $r['category'] === 'design'
+            ? '<span class="scope-tag out">Design</span>'
+            : '<span class="scope-tag in">Code</span>';
+        $rows .= "<tr><td class=\"opp-title\">$help<div class=\"rule-id\">$idEsc</div></td>"
+               . "<td>$catBadge</td><td>{$r['base']}</td><td>{$r['cur']}</td>"
+               . '<td>' . $fmtDelta((int)$r['delta']) . '</td>'
+               . "<td><span class=\"diff-status s-{$r['status']}\">{$r['status']}</span></td></tr>";
+    }
+    $table = $rows === ''
+        ? '<p class="scope-empty">No rule-level changes since the baseline.</p>'
+        : "<div class=\"table-wrap\" style=\"margin-top:10px\"><table>"
+        . "<thead><tr><th style=\"text-align:left\">Rule</th><th>Scope</th>"
+        . "<th>Baseline</th><th>Now</th><th>&Delta;</th><th>Status</th></tr></thead>"
+        . "<tbody>$rows</tbody></table></div>";
+
+    $fixed = (int)$c['fixed']; $newc = (int)$c['new'];
+    $improved = (int)$c['improved']; $worse = (int)$c['worse'];
+    return <<<HTML
+<section class="diff-section">
+  <div class="section-title">Changes since baseline <span class="hint-inline">— compared with $baseLabel</span></div>
+  <div class="diff-tiles">
+    $codeTile
+    $designTile
+  </div>
+  <div class="stats">
+    <span><strong style="color:#24824a">$fixed</strong> rules fixed</span>
+    <span><strong style="color:#24824a">$improved</strong> improved</span>
+    <span><strong style="color:#c23a2c">$newc</strong> new</span>
+    <span><strong style="color:#c23a2c">$worse</strong> worse</span>
+  </div>
+  $table
+</section>
+HTML;
+}
+
 function build_html(array $results, array $urlToGroup, array $agg,
                     string $sitemapUrl, string $generatedAt,
                     string $tags, ?string $engine, ?array $diff = null): string {
@@ -1189,6 +1383,26 @@ function build_html(array $results, array $urlToGroup, array $agg,
   .tab-panel[hidden] { display: none; }
   .scope-note { color: var(--body); font-size: 0.9rem; margin: 16px 0 4px; max-width: 780px; }
   .scope-empty { color: var(--good); font-size: 0.9rem; margin: 8px 0 0; }
+
+  /* changes-since-baseline block */
+  .diff-section { border: 1px solid var(--accent-line); background: var(--accent-tint);
+                  border-radius: 14px; padding: 6px 18px 18px; margin: 20px 0 6px; }
+  .diff-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+                gap: 12px; margin-top: 6px; }
+  .diff-tile { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  .diff-nums { font-family: 'Poppins', sans-serif; font-size: 1.1rem; color: var(--ink); margin-top: 4px;
+               display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .diff-nums .was { color: var(--soft); font-weight: 600; }
+  .diff-nums .arrow { color: var(--soft); }
+  .delta { font-size: 0.85rem; font-weight: 700; }
+  .delta.good { color: #24824a; }
+  .delta.bad  { color: #c23a2c; }
+  .delta.flat { color: var(--soft); }
+  .diff-status { display: inline-block; font-size: 0.66rem; font-weight: 700; padding: 2px 8px;
+                 border-radius: 999px; text-transform: capitalize; }
+  .s-fixed, .s-improved { background: #E6F4EA; color: #24824a; }
+  .s-new, .s-worse { background: #FBEAEA; color: #c23a2c; }
+  .s-unchanged { background: var(--bg-soft); color: var(--muted); }
 
   /* mobile: keep the two tabs side by side on one row */
   @media (max-width: 600px) {
@@ -1401,7 +1615,8 @@ HTML;
 
 function build_csv(array $results, array $urlToGroup): string {
     $fields = ['url','sitemap_group','status','critical','serious','moderate','minor',
-               'total_violations','needs_review','top_issues','error'];
+               'total_violations','code_violations','design_violations','needs_review',
+               'top_issues','error'];
     $fh = fopen('php://temp', 'r+');
     // Explicit escape: PHP 8.4 deprecates omitting it (default is being removed).
     fputcsv($fh, $fields, escape: '\\');
@@ -1409,10 +1624,16 @@ function build_csv(array $results, array $urlToGroup): string {
         $url = $r['url'];
         if (empty($r['ok'])) {
             fputcsv($fh, [$url, $urlToGroup[$url] ?? '', 'error',
-                          '', '', '', '', '', '', '', (string)($r['error'] ?? 'error')], escape: '\\');
+                          '', '', '', '', '', '', '', '', '', (string)($r['error'] ?? 'error')], escape: '\\');
             continue;
         }
         $c = $r['counts'] ?? [];
+        // Split this page's violation instances into code vs design.
+        $codeV = 0; $designV = 0;
+        foreach (($r['violations'] ?? []) as $v) {
+            $n = (int)($v['nodeCount'] ?? 1);
+            if (rule_category($v['id']) === 'design') $designV += $n; else $codeV += $n;
+        }
         $top = array_slice($r['violations'] ?? [], 0, 8);
         // Emit the stable axe rule id (e.g. "image-alt"), not the help text: the
         // platform tallies pages-affected per rule and maps ids to plain-language
@@ -1422,7 +1643,7 @@ function build_csv(array $results, array $urlToGroup): string {
             $url, $urlToGroup[$url] ?? '', 'ok',
             (int)($c['critical'] ?? 0), (int)($c['serious'] ?? 0),
             (int)($c['moderate'] ?? 0), (int)($c['minor'] ?? 0),
-            (int)($c['violations'] ?? 0), (int)($c['incomplete'] ?? 0),
+            (int)($c['violations'] ?? 0), $codeV, $designV, (int)($c['incomplete'] ?? 0),
             $topStr, '',
         ], escape: '\\');
     }
@@ -1469,6 +1690,19 @@ function render_pdf(string $htmlPath, string $pdfPath, string $node, string $scr
 // ─────────────────────────────────────────────────────────────────────────────
 //  Console summary
 // ─────────────────────────────────────────────────────────────────────────────
+
+function print_diff(array $diff): void {
+    $code = $diff['categories']['code'];
+    $design = $diff['categories']['design'];
+    $c = $diff['ruleCounts'];
+    $sign = fn ($d) => ($d > 0 ? '+' : '') . $d;
+    echo "\n─── Changes since baseline ──────────────────────────────\n";
+    printf("  Code issues   : %d → %d  (%s)\n", $code['base'], $code['cur'], $sign($code['delta']));
+    printf("  Design issues : %d → %d  (%s)\n", $design['base'], $design['cur'], $sign($design['delta']));
+    printf("  Rules         : %d fixed, %d improved, %d new, %d worse\n",
+        $c['fixed'], $c['improved'], $c['new'], $c['worse']);
+    echo "─────────────────────────────────────────────────────────\n";
+}
 
 function print_summary(array $agg, array $results): void {
     $t = $agg['totals'];
@@ -1542,17 +1776,42 @@ function main(array $argv): void {
 
     // 3 — Aggregate
     $agg = aggregate($results);
+    $generatedAt = date('Y-m-d H:i');
+
+    // 3b — Optional comparison against a previous snapshot.
+    $diff = null;
+    if ($args['compare'] !== null) {
+        $baseRaw = @file_get_contents($args['compare']);
+        $base = $baseRaw !== false ? json_decode($baseRaw, true) : null;
+        if (is_array($base) && isset($base['rules'])) {
+            $diff = compare_snapshots($base, build_snapshot($agg, [
+                'generatedAt' => $generatedAt, 'sitemap' => $args['sitemap'],
+                'tags' => $args['tags'], 'engine' => $engine, 'pages' => count($results),
+            ]));
+        } else {
+            fwrite(STDERR, "⚠  Could not read baseline snapshot '{$args['compare']}' — skipping comparison.\n");
+        }
+    }
 
     // 4 — HTML report
-    $generatedAt = date('Y-m-d H:i');
     file_put_contents($args['output'],
         build_html($results, $urlToGroup, $agg, $args['sitemap'],
-                   $generatedAt, $args['tags'], $engine));
+                   $generatedAt, $args['tags'], $engine, $diff));
     echo "✅  HTML report → {$args['output']}\n";
 
     // 5 — CSV
     file_put_contents($args['csv'], build_csv($results, $urlToGroup));
     echo "✅  CSV export  → {$args['csv']}\n";
+
+    // 5a — JSON snapshot (durable record for tracking improvement over time)
+    if ($args['snapshot']) {
+        file_put_contents($args['snapshot'], json_encode(
+            build_snapshot($agg, [
+                'generatedAt' => $generatedAt, 'sitemap' => $args['sitemap'],
+                'tags' => $args['tags'], 'engine' => $engine, 'pages' => count($results),
+            ]), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        echo "✅  Snapshot    → {$args['snapshot']}\n";
+    }
 
     // 5b — PDF (optional, rendered from the HTML report)
     if ($args['pdf']) {
@@ -1567,6 +1826,7 @@ function main(array $argv): void {
 
     // 6 — Console summary
     print_summary($agg, $results);
+    if ($diff !== null) print_diff($diff);
 }
 
 // Run as a CLI tool only. When this file is require()d (e.g. by the web

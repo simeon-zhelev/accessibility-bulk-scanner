@@ -74,6 +74,13 @@ if (!preg_match('/^[A-Za-z0-9\-]{8,64}$/', $token)) {
     $token = null;
 }
 
+// Optional baseline: the id of a previous run to diff against (its snapshot
+// lives at reports/{baseline}.json). Validated to the same id shape.
+$baseline = (string)($_GET['baseline'] ?? '');
+if (!preg_match('/^[A-Za-z0-9\-]{8,64}$/', $baseline)) {
+    $baseline = null;
+}
+
 $args = [
     'sitemap'          => $sitemap,
     'tags'             => 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice',
@@ -207,12 +214,31 @@ $id      = $token ?? (date('Ymd-His') . '-' . substr(bin2hex(random_bytes(4)), 0
 $htmlRel = "reports/{$id}.html";
 $csvRel  = "reports/{$id}.csv";
 $pdfRel  = "reports/{$id}.pdf";
+$jsonRel = "reports/{$id}.json";
+
+// Build this run's snapshot (durable record for tracking) and, when a baseline
+// was chosen, diff against it for a "Changes since baseline" section.
+$snapshot = build_snapshot($agg, [
+    'generatedAt' => $generatedAt, 'sitemap' => $args['sitemap'],
+    'tags' => $args['tags'], 'engine' => $engine, 'pages' => count($results),
+]);
+$diff = null;
+$comparedTo = null;
+if ($baseline !== null && is_file(__DIR__ . "/reports/{$baseline}.json")) {
+    $base = json_decode((string)file_get_contents(__DIR__ . "/reports/{$baseline}.json"), true);
+    if (is_array($base) && isset($base['rules'])) {
+        $diff = compare_snapshots($base, $snapshot);
+        $comparedTo = $baseline;
+    }
+}
 
 file_put_contents(__DIR__ . '/' . $htmlRel,
     build_html($results, $urlToGroup, $agg, $args['sitemap'],
-               $generatedAt, $args['tags'], $engine));
+               $generatedAt, $args['tags'], $engine, $diff));
 file_put_contents(__DIR__ . '/' . $csvRel,
     build_csv($results, $urlToGroup));
+file_put_contents(__DIR__ . '/' . $jsonRel,
+    json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
 // Render a PDF from the HTML report (best-effort; report still works without).
 // Skipped on a stopped scan — the user asked to stop, so don't make them wait.
@@ -229,10 +255,11 @@ if (!$stopped) {
 
 $t = $agg['totals'];
 $donePayload = [
-    'stopped'   => $stopped,
-    'reportUrl' => $htmlRel,
-    'csvUrl'    => $csvRel,
-    'pdfUrl'    => $pdfOk ? $pdfRel : null,
+    'stopped'    => $stopped,
+    'reportUrl'  => $htmlRel,
+    'csvUrl'     => $csvRel,
+    'pdfUrl'     => $pdfOk ? $pdfRel : null,
+    'comparedTo' => $comparedTo,
     'summary'   => [
         'pages'           => count($results),
         'pagesWithIssues' => $agg['pagesWithIssues'],

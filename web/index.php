@@ -268,6 +268,13 @@
           <input type="checkbox" id="crawl" name="crawl">
           <label for="crawl" style="font-weight:400">Crawl the site directly — follow links instead of the sitemap <span class="hint">(used automatically when no sitemap is found)</span></label>
         </div>
+
+        <div class="field full">
+          <label for="baseline">Compare against a previous run <span class="hint">— optional; measures improvement since that scan</span></label>
+          <select id="baseline" name="baseline">
+            <option value="">None — don’t compare</option>
+          </select>
+        </div>
       </div>
 
       <div class="actions">
@@ -325,6 +332,29 @@ const impactColor = { critical:'#ef4444', serious:'#f97316', moderate:'#eab308',
 let es = null;
 let scanToken = null;
 let stopping = false;
+
+// Populate the "compare against a previous run" dropdown from saved snapshots.
+const baselineSel = document.getElementById('baseline');
+function loadBaselines() {
+  fetch('reports.php', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : [])
+    .then(list => {
+      const keep = baselineSel.value;
+      baselineSel.length = 1; // keep the "None" option
+      if (!Array.isArray(list)) return;
+      for (const s of list) {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        const when = s.generatedAt || s.id;
+        const host = (s.sitemap || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+        opt.textContent = `${when} · ${host} · ${s.code + s.design} issues (${s.pages}p)`;
+        baselineSel.appendChild(opt);
+      }
+      if (keep) baselineSel.value = keep;
+    })
+    .catch(() => {});
+}
+loadBaselines();
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -395,6 +425,7 @@ form.addEventListener('submit', (e) => {
     renderActions(d);
     reportFrame.src = d.reportUrl;
     resultEl.hidden = false;
+    loadBaselines(); // the run just finished is now available as a baseline
   });
 
   es.addEventListener('error', (ev) => {
