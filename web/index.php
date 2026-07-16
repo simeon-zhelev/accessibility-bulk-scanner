@@ -63,6 +63,13 @@
   .spinner.hidden { display:none; }
   @keyframes spin { to { transform:rotate(360deg); } }
   #statusMsg { font-weight:600; }
+  button.stop {
+    margin-left:auto; font:inherit; font-weight:600; font-size:14px; cursor:pointer;
+    background:#fff; color:var(--critical); border:1px solid #fecaca;
+    padding:8px 16px; border-radius:10px; transition:background .15s, border-color .15s;
+  }
+  button.stop:hover { background:#fef2f2; border-color:#fca5a5; }
+  button.stop:disabled { opacity:.55; cursor:not-allowed; }
   .bar { height:10px; background:var(--line); border-radius:999px; overflow:hidden; }
   .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#2563eb); transition:width .25s; }
   .counter { font-size:13px; color:var(--muted); margin-top:8px; }
@@ -155,6 +162,7 @@
       <div class="statusbar">
         <div class="spinner" id="spinner"></div>
         <span id="statusMsg">Starting…</span>
+        <button type="button" class="stop" id="stopBtn" hidden>Stop scan</button>
       </div>
       <div class="bar"><i id="barFill"></i></div>
       <div class="counter" id="counter"></div>
@@ -182,6 +190,7 @@ const runEl = document.getElementById('run');
 const submitBtn = document.getElementById('submitBtn');
 const spinner = document.getElementById('spinner');
 const statusMsg = document.getElementById('statusMsg');
+const stopBtn = document.getElementById('stopBtn');
 const barFill = document.getElementById('barFill');
 const counter = document.getElementById('counter');
 const logEl = document.getElementById('log');
@@ -193,6 +202,8 @@ const errorEl = document.getElementById('error');
 
 const impactColor = { critical:'#ef4444', serious:'#f97316', moderate:'#eab308', minor:'#3b82f6' };
 let es = null;
+let scanToken = null;
+let stopping = false;
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -210,6 +221,14 @@ form.addEventListener('submit', (e) => {
   submitBtn.disabled = true;
   reportFrame.removeAttribute('src');
 
+  // per-scan token so the Stop button can signal this run on the server
+  scanToken = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2))
+                .replace(/[^A-Za-z0-9-]/g, '');
+  stopping = false;
+  stopBtn.hidden = false;
+  stopBtn.disabled = false;
+  stopBtn.textContent = 'Stop scan';
+
   // build query string
   const data = new FormData(form);
   const params = new URLSearchParams();
@@ -217,6 +236,7 @@ form.addEventListener('submit', (e) => {
     if (k === 'no-best-practice') { params.set(k, '1'); continue; }
     if (v !== '') params.set(k, v);
   }
+  params.set('token', scanToken);
 
   es = new EventSource('scan.php?' + params.toString());
 
@@ -241,7 +261,9 @@ form.addEventListener('submit', (e) => {
   es.addEventListener('done', (ev) => {
     const d = JSON.parse(ev.data);
     finish();
-    statusMsg.textContent = 'Scan complete.';
+    statusMsg.textContent = d.stopped
+      ? `Scan stopped — report covers the ${d.summary.pages} page${d.summary.pages === 1 ? '' : 's'} scanned so far.`
+      : 'Scan complete.';
     renderSummary(d.summary);
     renderActions(d);
     reportFrame.src = d.reportUrl;
@@ -253,11 +275,56 @@ form.addEventListener('submit', (e) => {
     if (ev.data) {
       try { showError(JSON.parse(ev.data).message); return; } catch (_) {}
     }
+    if (stopping) return; // we closed the stream on purpose; polling takes over
     if (es.readyState === EventSource.CLOSED) {
       showError('The connection to the scanner was lost. Check the server console for details.');
     }
   });
 });
+
+stopBtn.addEventListener('click', () => {
+  if (!scanToken || stopping) return;
+  stopping = true;
+  stopBtn.disabled = true;
+  stopBtn.textContent = 'Stopping…';
+  statusMsg.textContent = 'Stopping — finishing pages already in flight…';
+
+  // Closing the stream is the stop signal: the server sees the dropped
+  // connection (connection_aborted) and terminates the browser engine. It then
+  // builds a report for the pages already scanned and writes a status sidecar,
+  // which we poll for here since the SSE `done` can no longer reach us.
+  const token = scanToken;
+  if (es) es.close();
+  pollForStopped(token);
+});
+
+function pollForStopped(token) {
+  const url = 'reports/' + encodeURIComponent(token) + '.status.json';
+  const deadline = Date.now() + 120000; // give up after 2 min
+  const tick = () => {
+    if (!stopping || token !== scanToken) return; // superseded / already handled
+    fetch(url, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        if (!stopping || token !== scanToken) return;
+        finish();
+        statusMsg.textContent =
+          `Scan stopped — report covers the ${d.summary.pages} page${d.summary.pages === 1 ? '' : 's'} scanned so far.`;
+        renderSummary(d.summary);
+        renderActions(d);
+        reportFrame.src = d.reportUrl;
+        resultEl.hidden = false;
+      })
+      .catch(() => {
+        if (Date.now() > deadline) {
+          if (stopping) { finish(); statusMsg.textContent = 'Scan stopped.'; }
+          return;
+        }
+        setTimeout(tick, 1200);
+      });
+  };
+  tick();
+}
 
 function addLogRow(d) {
   const row = document.createElement('div');
@@ -324,6 +391,9 @@ function showError(msg) {
 function finish() {
   spinner.classList.add('hidden');
   submitBtn.disabled = false;
+  stopBtn.hidden = true;
+  stopping = false;
+  scanToken = null;
   if (es) es.close();
 }
 </script>

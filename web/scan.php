@@ -65,6 +65,15 @@ if (!filter_var($sitemap, FILTER_VALIDATE_URL)) {
     fail('Please provide a valid website or sitemap URL (http or https).');
 }
 
+// Per-scan token from the browser. Used as the report id and as the key for a
+// small sidecar JSON the browser polls after it stops the scan. EventSource is
+// one-way, so the browser signals "stop" by closing the stream; this script
+// detects that via connection_aborted() and terminates the engine early.
+$token = (string)($_GET['token'] ?? '');
+if (!preg_match('/^[A-Za-z0-9\-]{8,64}$/', $token)) {
+    $token = null;
+}
+
 $args = [
     'sitemap'          => $sitemap,
     'tags'             => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
@@ -136,7 +145,7 @@ if (!$urls) {
 $total = count($urls);
 sse('status', ['message' => "Found {$total} page" . ($total === 1 ? '' : 's') . '. Launching the browser…']);
 
-[$resultsMap, $engine] = scan_all($urls, $urlToGroup, $args, function (array $ev) use ($total) {
+[$resultsMap, $engine, $stopped] = scan_all($urls, $urlToGroup, $args, function (array $ev) use ($total) {
     if (($ev['phase'] ?? '') === 'scan-start') {
         sse('meta', [
             'total'       => $ev['total'],
@@ -153,7 +162,14 @@ sse('status', ['message' => "Found {$total} page" . ($total === 1 ? '' : 's') . 
             'counts' => $ev['counts'],
         ]);
     }
+}, function () {
+    // Stop as soon as the browser closes the EventSource. connection_aborted()
+    // flips to 1 after a flush to the now-dead socket, which our per-page sse()
+    // calls provide — so this trips within one page of the user clicking Stop.
+    return connection_aborted() === 1;
 });
+
+$stopped = $stopped ?? false;
 
 // Preserve sitemap order
 $results = [];
@@ -161,15 +177,21 @@ foreach ($urls as $u) {
     if (isset($resultsMap[$u])) $results[] = $resultsMap[$u];
 }
 if (!$results) {
-    fail('No results returned from the scan. The browser engine may have failed to launch.');
+    fail($stopped
+        ? 'Scan stopped before any page finished — no report to build.'
+        : 'No results returned from the scan. The browser engine may have failed to launch.');
 }
 
 // ── Build the report + CSV and write them where the browser can fetch them ────
-sse('status', ['message' => 'Building the report…']);
+sse('status', ['message' => $stopped
+    ? 'Scan stopped. Building a report for the pages scanned so far…'
+    : 'Building the report…']);
 $agg = aggregate($results);
 $generatedAt = date('Y-m-d H:i');
 
-$id      = date('Ymd-His') . '-' . substr(bin2hex(random_bytes(4)), 0, 6);
+// Use the browser's token as the report id when present, so it can fetch the
+// finished report by name after stopping (when the SSE `done` never arrives).
+$id      = $token ?? (date('Ymd-His') . '-' . substr(bin2hex(random_bytes(4)), 0, 6));
 $htmlRel = "reports/{$id}.html";
 $csvRel  = "reports/{$id}.csv";
 $pdfRel  = "reports/{$id}.pdf";
@@ -181,16 +203,21 @@ file_put_contents(__DIR__ . '/' . $csvRel,
     build_csv($results, $urlToGroup));
 
 // Render a PDF from the HTML report (best-effort; report still works without).
-sse('status', ['message' => 'Rendering the PDF…']);
-$pdfOk = render_pdf(
-    __DIR__ . '/' . $htmlRel,
-    __DIR__ . '/' . $pdfRel,
-    $args['node'],
-    dirname(__DIR__) . '/html-to-pdf.js'
-);
+// Skipped on a stopped scan — the user asked to stop, so don't make them wait.
+$pdfOk = false;
+if (!$stopped) {
+    sse('status', ['message' => 'Rendering the PDF…']);
+    $pdfOk = render_pdf(
+        __DIR__ . '/' . $htmlRel,
+        __DIR__ . '/' . $pdfRel,
+        $args['node'],
+        dirname(__DIR__) . '/html-to-pdf.js'
+    );
+}
 
 $t = $agg['totals'];
-sse('done', [
+$donePayload = [
+    'stopped'   => $stopped,
     'reportUrl' => $htmlRel,
     'csvUrl'    => $csvRel,
     'pdfUrl'    => $pdfOk ? $pdfRel : null,
@@ -207,4 +234,13 @@ sse('done', [
         'violations'      => $t['violations'],
         'engine'          => $engine,
     ],
-]);
+];
+
+// Write a sidecar with the same payload. When the user stops a scan the browser
+// has closed the stream, so the `done` event below never reaches it — instead
+// it polls this file (keyed by the token) to pick up the partial report.
+if ($token !== null) {
+    file_put_contents(__DIR__ . "/reports/{$token}.status.json", json_encode($donePayload));
+}
+
+sse('done', $donePayload);
