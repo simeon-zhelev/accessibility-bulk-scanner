@@ -58,6 +58,8 @@ function parse_args(array $argv): array {
     $defaults = [
         'sitemap'     => null,
         'url'         => null,         // site URL — sitemap is auto-discovered
+        'crawl'       => false,        // force an HTML crawl (skip sitemap)
+        'crawl-depth' => 0,            // link depth for the crawl (0 = unlimited)
         'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
         'standard'    => null,         // shortcut that overrides --tags
         'no-best-practice' => false,
@@ -71,9 +73,9 @@ function parse_args(array $argv): array {
         'pdf'         => null,         // null = off; set by --pdf[=FILE]
     ];
     $opts = getopt('', [
-        'sitemap:', 'url:', 'tags:', 'standard:', 'no-best-practice',
-        'max-urls:', 'concurrency:', 'timeout:', 'node:', 'runner:',
-        'output:', 'csv:', 'pdf::', 'help',
+        'sitemap:', 'url:', 'crawl', 'crawl-depth:', 'tags:', 'standard:',
+        'no-best-practice', 'max-urls:', 'concurrency:', 'timeout:', 'node:',
+        'runner:', 'output:', 'csv:', 'pdf::', 'help',
     ]);
 
     // --url is an alias: pass a site URL and the sitemap is auto-discovered.
@@ -95,6 +97,11 @@ Options:
                        URL/domain whose sitemap is auto-discovered (required)
   --url=URL            Alias for --sitemap; a site URL whose sitemap is
                        auto-discovered via robots.txt + common paths
+  --crawl              Skip sitemap detection and discover pages by crawling
+                       same-origin <a href> links from the start URL. Crawling
+                       also kicks in automatically when no sitemap is found.
+  --crawl-depth=N      Limit crawl link depth (0 = unlimited, the default;
+                       bounded by --max-urls, or 2000 pages when unset)
   --standard=S         Convenience preset, sets --tags:
                          wcag2a | wcag2aa | wcag21a | wcag21aa (default) |
                          wcag22aa | section508
@@ -134,6 +141,8 @@ HELP;
     $args['concurrency'] = max(1, (int)$args['concurrency']);
     $args['timeout']     = max(1000, (int)$args['timeout']);
     $args['no-best-practice'] = isset($opts['no-best-practice']);
+    $args['crawl']       = isset($opts['crawl']);
+    $args['crawl-depth'] = max(0, (int)($opts['crawl-depth'] ?? 0));
 
     // --standard overrides --tags
     if (!empty($opts['standard'])) {
@@ -363,6 +372,138 @@ function collect_urls(string $sitemapUrl, ?int $maxUrls = null): array {
     if ($maxUrls !== null) {
         $urls = array_slice($urls, 0, $maxUrls);
     }
+    return [$urls, $urlToGroup];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HTML crawler (fallback for sites without an XML sitemap)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Safety cap on pages discovered by crawling when --max-urls is not set. */
+const CRAWL_DEFAULT_CAP = 2000;
+
+/** File extensions that are never HTML pages — skip these links while crawling. */
+const CRAWL_SKIP_EXT = [
+    'jpg','jpeg','png','gif','svg','webp','ico','bmp','tif','tiff','avif',
+    'css','js','mjs','json','xml','rss','atom','txt','csv','pdf','zip','gz',
+    'tar','rar','7z','dmg','exe','mp4','webm','mov','avi','mkv','mp3','wav',
+    'ogg','flac','woff','woff2','ttf','otf','eot','map','wasm','apk','pkg',
+];
+
+/** Group label for a crawled page — its first path segment, Title-cased. */
+function crawl_group_name(string $url): string {
+    $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
+    if ($path === '') return 'Home';
+    $seg = preg_replace('/\.[a-z0-9]+$/i', '', explode('/', $path)[0]);
+    $seg = ucwords(str_replace(['-', '_'], ' ', $seg));
+    return $seg !== '' ? $seg : 'Pages';
+}
+
+/**
+ * Resolve a possibly-relative href against a base URL into an absolute URL,
+ * with `.`/`..` normalisation and fragment stripping. Returns null for
+ * non-navigational hrefs (mailto:, tel:, javascript:, data:, bare #fragment).
+ */
+function resolve_url(string $base, string $rel): ?string {
+    $rel = trim($rel);
+    if ($rel === '' || $rel[0] === '#') return null;                    // empty / same-page
+    if (preg_match('~^(mailto|tel|javascript|data|ftp|sms|file):~i', $rel)) return null;
+    if (($h = strpos($rel, '#')) !== false) $rel = substr($rel, 0, $h); // drop fragment
+    if ($rel === '') return null;
+    if (preg_match('#^https?://#i', $rel)) return $rel;                  // already absolute
+
+    $b = parse_url($base);
+    if ($b === false || empty($b['host'])) return null;
+    $scheme = $b['scheme'] ?? 'https';
+    if (strncmp($rel, '//', 2) === 0) return $scheme . ':' . $rel;       // protocol-relative
+
+    $origin = $scheme . '://' . $b['host'] . (isset($b['port']) ? ':' . $b['port'] : '');
+    if ($rel[0] === '/') {
+        $path = $rel;                                                    // root-relative
+    } else {
+        $basePath = $b['path'] ?? '/';                                   // relative to dir
+        $dir = substr($basePath, 0, strrpos($basePath, '/') + 1);
+        $path = ($dir === '' ? '/' : $dir) . $rel;
+    }
+
+    $query = '';
+    if (($q = strpos($path, '?')) !== false) { $query = substr($path, $q); $path = substr($path, 0, $q); }
+    $segments = [];
+    foreach (explode('/', $path) as $s) {
+        if ($s === '' || $s === '.') continue;
+        if ($s === '..') { array_pop($segments); continue; }
+        $segments[] = $s;
+    }
+    $normalized = '/' . implode('/', $segments);
+    if (substr($path, -1) === '/' && $normalized !== '/') $normalized .= '/';
+    return $origin . $normalized . $query;
+}
+
+/**
+ * Breadth-first crawl of a site's HTML pages, following same-origin <a href>
+ * links from a start URL. This is the fallback when a site has no XML sitemap.
+ * Returns the same [urls, urlToGroup] shape as collect_urls().
+ *
+ * $maxUrls caps the pages discovered (defaults to CRAWL_DEFAULT_CAP when null).
+ * $maxDepth limits link depth from the start page (0 = unlimited, bounded by
+ * the page cap). $log is an optional progress callback (defaults to echo).
+ */
+function crawl_site(string $startUrl, ?int $maxUrls = null, int $maxDepth = 0, ?callable $log = null): array {
+    $say = function (string $m) use ($log) { $log ? $log($m) : print($m . "\n"); };
+
+    $startUrl = trim($startUrl);
+    if (!preg_match('#^https?://#i', $startUrl)) $startUrl = 'https://' . ltrim($startUrl, '/');
+    $b = parse_url($startUrl);
+    if ($b === false || empty($b['host'])) return [[], []];
+    $scheme = $b['scheme'] ?? 'https';
+    $host   = strtolower($b['host'] . (isset($b['port']) ? ':' . $b['port'] : ''));
+    $origin = $scheme . '://' . $host;
+    $cap    = $maxUrls ?? CRAWL_DEFAULT_CAP;
+
+    $urls = [];
+    $urlToGroup = [];
+    $visited = [$startUrl => true];
+    $queue = [[$startUrl, 0]];
+
+    $say("\n🕸  Crawling {$origin} for HTML pages (cap {$cap}) …");
+
+    while ($queue && count($urls) < $cap) {
+        [$url, $depth] = array_shift($queue);
+        try {
+            $html = http_get($url, 20);
+        } catch (Throwable $e) {
+            $say("    ⚠  Skipped {$url}: {$e->getMessage()}");
+            continue;
+        }
+        // Only treat responses that look like HTML as scannable pages.
+        if (!preg_match('/<(!doctype|html|head|body|a\b)/i', $html)) continue;
+
+        $urls[] = $url;
+        $urlToGroup[$url] = crawl_group_name($url);
+        $say('  ↳ [' . count($urls) . "] {$url}");
+
+        if (($maxDepth > 0 && $depth >= $maxDepth) || count($urls) >= $cap) continue;
+
+        libxml_use_internal_errors(true);
+        $doc = new DOMDocument();
+        $doc->loadHTML($html);
+        libxml_clear_errors();
+        foreach ($doc->getElementsByTagName('a') as $a) {
+            $abs = resolve_url($url, $a->getAttribute('href'));
+            if ($abs === null || isset($visited[$abs])) continue;
+            $ph = parse_url($abs);
+            if ($ph === false || empty($ph['host'])) continue;
+            $ahost = strtolower($ph['host'] . (isset($ph['port']) ? ':' . $ph['port'] : ''));
+            if ($ahost !== $host) continue;                              // same-origin only
+            $ext = strtolower(pathinfo($ph['path'] ?? '', PATHINFO_EXTENSION));
+            if ($ext !== '' && in_array($ext, CRAWL_SKIP_EXT, true)) continue;
+            $visited[$abs] = true;
+            $queue[] = [$abs, $depth + 1];
+        }
+    }
+
+    $groupCount = count(array_unique(array_values($urlToGroup)));
+    $say('   Discovered ' . count($urls) . " page URL(s) across $groupCount section(s) by crawling\n");
     return [$urls, $urlToGroup];
 }
 
@@ -1184,20 +1325,31 @@ function main(array $argv): void {
     $args = parse_args($argv);
     preflight($args);
 
-    // 0 — Resolve the sitemap (accepts a direct sitemap URL or a plain site URL)
-    $resolved = discover_sitemap($args['sitemap']);
-    if ($resolved === null) {
-        fwrite(STDERR, "❌  Could not find a sitemap for '{$args['sitemap']}'.\n"
-            . "    Pass a direct sitemap URL, e.g. "
-            . "--sitemap=https://example.com/sitemap_index.xml\n");
-        exit(1);
+    // 0/1 — Discover pages: from the XML sitemap, or by crawling the site.
+    $startUrl = $args['sitemap'];
+    if ($args['crawl']) {
+        // Forced crawl — skip sitemap detection entirely.
+        [$urls, $urlToGroup] = crawl_site($startUrl, $args['max-urls'], $args['crawl-depth']);
+    } else {
+        $resolved = discover_sitemap($startUrl);
+        if ($resolved !== null) {
+            $args['sitemap'] = $resolved;
+            [$urls, $urlToGroup] = collect_urls($resolved, $args['max-urls']);
+        } else {
+            $urls = [];
+            $urlToGroup = [];
+        }
+        // Fall back to crawling when no sitemap was found (or it was empty).
+        if (!$urls) {
+            fwrite(STDERR, "ℹ  No usable sitemap for '{$startUrl}' — falling back to an HTML crawl.\n");
+            $args['sitemap'] = $startUrl;
+            [$urls, $urlToGroup] = crawl_site($startUrl, $args['max-urls'], $args['crawl-depth']);
+        }
     }
-    $args['sitemap'] = $resolved;
 
-    // 1 — Collect URLs from the sitemap
-    [$urls, $urlToGroup] = collect_urls($args['sitemap'], $args['max-urls']);
     if (!$urls) {
-        fwrite(STDERR, "❌  No page URLs found. Verify the sitemap URL is accessible.\n");
+        fwrite(STDERR, "❌  No page URLs found. The site may be unreachable, "
+            . "or it may block automated requests.\n");
         exit(1);
     }
 
