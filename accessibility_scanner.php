@@ -54,6 +54,20 @@ function standard_to_tags(string $standard): ?string {
     return $map[$key] ?? null;
 }
 
+/** Friendly label for an axe tag list, e.g. "WCAG 2.2 AA + best practices". */
+function standard_label(string $tags): string {
+    $t = array_map('trim', explode(',', strtolower($tags)));
+    $has = fn($x) => in_array($x, $t, true);
+    $level = $has('wcag22aa') ? 'WCAG 2.2 AA'
+        : ($has('wcag21aa') ? 'WCAG 2.1 AA'
+        : ($has('wcag2aa')  ? 'WCAG 2.0 AA'
+        : ($has('wcag21a')  ? 'WCAG 2.1 A'
+        : ($has('wcag2a')   ? 'WCAG 2.0 A'
+        : ($has('section508') ? 'Section 508' : 'Custom')))));
+    if ($has('best-practice')) $level .= ' + best practices';
+    return $level;
+}
+
 function parse_args(array $argv): array {
     $defaults = [
         'sitemap'     => null,
@@ -513,6 +527,16 @@ function crawl_site(string $startUrl, ?int $maxUrls = null, int $maxDepth = 0, ?
 
 const IMPACTS = ['critical', 'serious', 'moderate', 'minor'];
 
+// Rules that are design decisions (contrast) rather than code fixes. These are
+// reported separately as "out of scope" for a code-focused engagement. Edit
+// this list to reclassify — everything not listed here is treated as "code".
+const DESIGN_RULES = ['color-contrast', 'color-contrast-enhanced'];
+
+/** Category for an axe rule id: 'design' (contrast) or 'code' (everything else). */
+function rule_category(string $ruleId): string {
+    return in_array($ruleId, DESIGN_RULES, true) ? 'design' : 'code';
+}
+
 /**
  * Check the runtime prerequisites. Returns a human-readable problem string,
  * or null if everything is in place. Shared by the CLI preflight() and the
@@ -666,9 +690,14 @@ function aggregate(array $results): array {
             'violations'=>0,'incomplete'=>0];
     $pagesWithIssues = 0; $cleanPages = 0; $errorPages = 0; $okPages = 0;
 
-    // rule id => [help, impact, helpUrl, pages, elements]
+    // rule id => [help, impact, helpUrl, category, pages, elements]
     $rules = [];
     $review = [];
+
+    // Per-category (code / design) tallies of element instances by impact.
+    $catBase = ['critical'=>0,'serious'=>0,'moderate'=>0,'minor'=>0,
+                'violations'=>0, 'pagesWithIssues'=>0, 'uniqueRules'=>0];
+    $catTotals = ['code'=>$catBase, 'design'=>$catBase];
 
     foreach ($results as $r) {
         if (empty($r['ok'])) { $errorPages++; continue; }
@@ -681,20 +710,30 @@ function aggregate(array $results): array {
         if ((int)($c['violations'] ?? 0) > 0) $pagesWithIssues++;
         else $cleanPages++;
 
+        $pageCats = ['code'=>false, 'design'=>false];  // did this page hit each category?
         foreach (($r['violations'] ?? []) as $v) {
-            $id = $v['id'];
+            $id  = $v['id'];
+            $cat = rule_category($id);
+            $imp = $v['impact'];
+            $n   = (int)($v['nodeCount'] ?? 1);
             if (!isset($rules[$id])) {
-                $rules[$id] = ['help'=>$v['help'],'impact'=>$v['impact'],
-                               'helpUrl'=>$v['helpUrl'],'pages'=>0,'elements'=>0];
+                $rules[$id] = ['help'=>$v['help'],'impact'=>$imp,'helpUrl'=>$v['helpUrl'],
+                               'category'=>$cat,'pages'=>0,'elements'=>0];
             }
             $rules[$id]['pages']++;
-            $rules[$id]['elements'] += (int)($v['nodeCount'] ?? 1);
+            $rules[$id]['elements'] += $n;
+            if (isset($catTotals[$cat][$imp])) $catTotals[$cat][$imp] += $n;
+            $catTotals[$cat]['violations'] += $n;
+            $pageCats[$cat] = true;
+        }
+        foreach ($pageCats as $cat => $hit) {
+            if ($hit) $catTotals[$cat]['pagesWithIssues']++;
         }
         foreach (($r['incomplete'] ?? []) as $v) {
             $id = $v['id'];
             if (!isset($review[$id])) {
-                $review[$id] = ['help'=>$v['help'],'impact'=>$v['impact'],
-                                'helpUrl'=>$v['helpUrl'],'pages'=>0,'elements'=>0];
+                $review[$id] = ['help'=>$v['help'],'impact'=>$v['impact'],'helpUrl'=>$v['helpUrl'],
+                                'category'=>rule_category($id),'pages'=>0,'elements'=>0];
             }
             $review[$id]['pages']++;
             $review[$id]['elements'] += (int)($v['nodeCount'] ?? 1);
@@ -710,6 +749,12 @@ function aggregate(array $results): array {
     uasort($rules, $cmp);
     uasort($review, $cmp);
 
+    // Split the sorted rule map by category (order preserved).
+    $codeRules = array_filter($rules, fn ($a) => $a['category'] === 'code');
+    $designRules = array_filter($rules, fn ($a) => $a['category'] === 'design');
+    $catTotals['code']['uniqueRules']   = count($codeRules);
+    $catTotals['design']['uniqueRules'] = count($designRules);
+
     return [
         'totals' => $tot,
         'pagesWithIssues' => $pagesWithIssues,
@@ -718,6 +763,9 @@ function aggregate(array $results): array {
         'okPages' => $okPages,
         'uniqueRules' => count($rules),
         'rules' => $rules,
+        'codeRules' => $codeRules,
+        'designRules' => $designRules,
+        'catTotals' => $catTotals,
         'review' => $review,
     ];
 }
@@ -764,49 +812,32 @@ function count_badge(int $n, string $color): string {
     return "<span style=\"$dim color:$color;font-weight:700\">$n</span>";
 }
 
-function summary_cards(array $agg, int $totalPages): string {
-    $t = $agg['totals'];
+/** The four impact cards (element-instance counts) for one issue set. */
+function impact_cards(array $totals): string {
     $cards = [
-        ['Critical', $t['critical'], impact_text_color('critical')],
-        ['Serious',  $t['serious'],  impact_text_color('serious')],
-        ['Moderate', $t['moderate'], impact_text_color('moderate')],
-        ['Minor',    $t['minor'],    impact_text_color('minor')],
+        ['Critical', (int)($totals['critical'] ?? 0), impact_text_color('critical')],
+        ['Serious',  (int)($totals['serious']  ?? 0), impact_text_color('serious')],
+        ['Moderate', (int)($totals['moderate'] ?? 0), impact_text_color('moderate')],
+        ['Minor',    (int)($totals['minor']    ?? 0), impact_text_color('minor')],
     ];
     $html = '';
     foreach ($cards as [$label, $n, $color]) {
         $html .= <<<CARD
 
-      <a class="card" href="#results">
+      <div class="card">
         <div class="card-label">$label</div>
         <div class="card-score" style="color:$color">$n</div>
         <div class="card-sub">element instances</div>
-      </a>
+      </div>
 CARD;
     }
-    $green = '#24824a';
-    $pwi = $agg['pagesWithIssues'];
-    $clean = $agg['cleanPages'];
-    $rules = $agg['uniqueRules'];
-    $errs = $agg['errorPages'];
-    $errLine = $errs > 0 ? " &nbsp;|&nbsp; ⚠ $errs page(s) failed to load" : '';
-
-    return <<<HTML
-<div class="section-title">Issues by Impact</div>
-<div class="cards">$html</div>
-<div class="stats">
-  <span><strong style="color:#c23a2c">$pwi</strong> / $totalPages pages with issues</span>
-  <span><strong style="color:$green">$clean</strong> clean pages</span>
-  <span><strong>$rules</strong> unique rules failing</span>$errLine
-</div>
-HTML;
+    return "<div class=\"cards\">$html</div>";
 }
 
-function top_issues_table(array $agg, int $totalPages): string {
-    $rules = $agg['rules'];
+/** A ranked rule table for one issue set (rules already sorted), or an empty note. */
+function issues_table(array $rules, int $totalPages, string $emptyMsg): string {
     if (!$rules) {
-        return '<div class="section-title">Top Issues</div>'
-             . '<p style="color:#24824a;font-size:0.9rem">No automated WCAG '
-             . 'violations detected. Manual testing is still required for full coverage.</p>';
+        return "<p class=\"scope-empty\">$emptyMsg</p>";
     }
     $rows = '';
     foreach ($rules as $id => $a) {
@@ -827,8 +858,6 @@ function top_issues_table(array $agg, int $totalPages): string {
                . "<td>{$a['elements']}</td></tr>";
     }
     return <<<HTML
-
-<div class="section-title">Top Issues (by pages affected)</div>
 <div class="table-wrap" style="margin-top:10px">
   <table>
     <thead>
@@ -841,8 +870,58 @@ function top_issues_table(array $agg, int $totalPages): string {
 HTML;
 }
 
-function review_table(array $agg, int $totalPages): string {
-    $review = $agg['review'];
+/**
+ * One full tab panel for a category ('code' or 'design'), composing every
+ * section — summary cards, rules table, by-sitemap-group, needs-manual-review
+ * and the per-page results — all filtered to that category.
+ */
+function tab_panel(string $category, array $agg, array $results,
+                   array $urlToGroup, int $totalPages, bool $active): string {
+    $cat     = $agg['catTotals'][$category] ?? [];
+    $rules   = $category === 'design' ? ($agg['designRules'] ?? []) : ($agg['codeRules'] ?? []);
+    $pwi     = (int)($cat['pagesWithIssues'] ?? 0);
+    $uniq    = (int)($cat['uniqueRules'] ?? 0);
+    $errs    = $category === 'code' ? (int)($agg['errorPages'] ?? 0) : 0;
+    $errLine = $errs > 0 ? " &nbsp;|&nbsp; ⚠ {$errs} page(s) failed to load" : '';
+
+    if ($category === 'design') {
+        $intro   = 'Colour-contrast issues that require <strong>design decisions</strong> (palette, tokens). '
+                 . 'These sit outside the current code-fix scope and are collected here for your design team.';
+        $emptyRules = 'No colour-contrast issues detected — nothing to hand to the design team.';
+    } else {
+        $intro   = 'Issues we can resolve in the site’s <strong>markup and templates</strong> — the focus of this engagement.';
+        $emptyRules = 'No automated code-side WCAG violations detected. Manual testing is still required for full coverage.';
+    }
+
+    $cards   = impact_cards($cat);
+    $table   = issues_table($rules, $totalPages, $emptyRules);
+    $group   = group_breakdown($results, $urlToGroup, $category);
+    $review  = review_table($agg, $totalPages, $category);
+    $detail  = results_section($results, $urlToGroup, $category);
+
+    $hidden = $active ? '' : ' hidden';
+    return <<<HTML
+<section class="tab-panel" id="panel-$category"$hidden role="tabpanel">
+  <p class="scope-note">$intro</p>
+
+  <div class="section-title">Summary</div>
+  $cards
+  <div class="stats">
+    <span><strong style="color:#c23a2c">$pwi</strong> / $totalPages pages affected</span>
+    <span><strong>$uniq</strong> unique rules</span>$errLine
+  </div>
+
+  <div class="section-title">Top Issues (by pages affected)</div>
+  $table
+  $group
+  $review
+  $detail
+</section>
+HTML;
+}
+
+function review_table(array $agg, int $totalPages, string $category): string {
+    $review = array_filter($agg['review'] ?? [], fn ($a) => ($a['category'] ?? 'code') === $category);
     if (!$review) return '';
     $rows = '';
     foreach (array_slice($review, 0, 15, true) as $id => $a) {
@@ -872,21 +951,27 @@ function review_table(array $agg, int $totalPages): string {
 HTML;
 }
 
-function group_breakdown(array $results, array $urlToGroup): string {
+function group_breakdown(array $results, array $urlToGroup, string $category): string {
     $groups = [];
+    $anyIssues = false;
     foreach ($results as $r) {
         if (empty($r['ok'])) continue;
         $g = $urlToGroup[$r['url']] ?? 'Other';
         if (!isset($groups[$g])) {
             $groups[$g] = ['pages'=>0,'violations'=>0,'critical'=>0,'serious'=>0];
         }
-        $c = $r['counts'] ?? [];
         $groups[$g]['pages']++;
-        $groups[$g]['violations'] += (int)($c['violations'] ?? 0);
-        $groups[$g]['critical']   += (int)($c['critical'] ?? 0);
-        $groups[$g]['serious']    += (int)($c['serious'] ?? 0);
+        // Tally only this category's violations (element instances) for the group.
+        foreach (($r['violations'] ?? []) as $v) {
+            if (rule_category($v['id']) !== $category) continue;
+            $n = (int)($v['nodeCount'] ?? 1);
+            $groups[$g]['violations'] += $n;
+            if ($v['impact'] === 'critical') $groups[$g]['critical'] += $n;
+            elseif ($v['impact'] === 'serious') $groups[$g]['serious'] += $n;
+            $anyIssues = true;
+        }
     }
-    if (count($groups) <= 1) return '';
+    if (count($groups) <= 1 || !$anyIssues) return '';
     ksort($groups);
 
     $rows = '';
@@ -918,7 +1003,7 @@ HTML;
  * counts; rows that have violations are clickable and expand an inline detail
  * row listing each issue (the old "Issues Per Page" view, folded in here).
  */
-function results_section(array $results, array $urlToGroup): string {
+function results_section(array $results, array $urlToGroup, string $category): string {
     $hasGroups = count(array_unique(array_values($urlToGroup))) > 1;
     $groupHead = $hasGroups ? '<th class="th-left" onclick="sortTable(this)">Group</th>' : '';
     $colspan   = $hasGroups ? 9 : 8;   // every column, for the detail row
@@ -942,15 +1027,25 @@ function results_section(array $results, array $urlToGroup): string {
             continue;
         }
 
-        $c = $r['counts'] ?? [];
-        $cell = fn($k, $col) => '<td data-sort="' . (int)($c[$k] ?? 0) . '">'
-            . count_badge((int)($c[$k] ?? 0), $col) . '</td>';
-        $total = (int)($c['violations'] ?? 0);
-        $incomplete = (int)($c['incomplete'] ?? 0);
+        // Category-filtered per-page tallies (element instances).
+        $viol = array_values(array_filter($r['violations'] ?? [],
+            fn($v) => rule_category($v['id']) === $category));
+        $cnts = ['critical'=>0,'serious'=>0,'moderate'=>0,'minor'=>0];
+        $total = 0;
+        foreach ($viol as $v) {
+            $n = (int)($v['nodeCount'] ?? 1);
+            $total += $n;
+            if (isset($cnts[$v['impact']])) $cnts[$v['impact']] += $n;
+        }
+        $incomplete = 0;
+        foreach (($r['incomplete'] ?? []) as $v) {
+            if (rule_category($v['id']) === $category) $incomplete += (int)($v['nodeCount'] ?? 1);
+        }
+        $cell = fn($k, $col) => '<td data-sort="' . $cnts[$k] . '">'
+            . count_badge($cnts[$k], $col) . '</td>';
         $totColor = $total === 0 ? '#24824a' : '#1a1a1a';
 
         // Per-page issue list (shown in the expandable detail row).
-        $viol = $r['violations'] ?? [];
         usort($viol, fn($a, $b) =>
             ($rank[$a['impact']] ?? 9) <=> ($rank[$b['impact']] ?? 9)
             ?: $b['nodeCount'] <=> $a['nodeCount']);
@@ -990,7 +1085,7 @@ function results_section(array $results, array $urlToGroup): string {
     }
     return <<<HTML
 
-<div class="section-title" id="results">Results
+<div class="section-title" id="results-$category">Results
   <span class="hint-inline">— click a row with issues to see the details, or a column header to sort</span></div>
 <div class="table-wrap">
   <table class="sortable">
@@ -1009,15 +1104,22 @@ HTML;
 
 function build_html(array $results, array $urlToGroup, array $agg,
                     string $sitemapUrl, string $generatedAt,
-                    string $tags, ?string $engine): string {
+                    string $tags, ?string $engine, ?array $diff = null): string {
     $totalPages = count($results);
-    $cards     = summary_cards($agg, $totalPages);
-    $groupHtml = group_breakdown($results, $urlToGroup);
-    $topHtml   = top_issues_table($agg, $totalPages);
-    $reviewHtml= review_table($agg, $totalPages);
-    $detail    = results_section($results, $urlToGroup);
+    $cat        = $agg['catTotals'] ?? ['code'=>[], 'design'=>[]];
+
+    // Two tab panels — each carries its own full set of sections, filtered to
+    // that category ('code' = in scope, 'design' = out of scope / contrast).
+    $codePanel   = tab_panel('code',   $agg, $results, $urlToGroup, $totalPages, true);
+    $designPanel = tab_panel('design', $agg, $results, $urlToGroup, $totalPages, false);
+
+    $codeViol   = (int)($cat['code']['violations'] ?? 0);
+    $designViol = (int)($cat['design']['violations'] ?? 0);
+
+    $diffHtml  = $diff ? comparison_section($diff) : '';
     $sitemapEsc= htmlspecialchars($sitemapUrl);
     $tagsEsc   = htmlspecialchars($tags);
+    $stdLabel  = htmlspecialchars(standard_label($tags));
     $engineEsc = htmlspecialchars($engine ?? 'axe-core');
 
     return <<<HTML
@@ -1029,7 +1131,7 @@ function build_html(array $results, array $urlToGroup, array $agg,
 <title>Accessibility Report — $generatedAt</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   /* ── Website Health Check report theme (teal) ── */
   :root {
@@ -1039,7 +1141,7 @@ function build_html(array $results, array $urlToGroup, array $agg,
     --good: #1F9D5B; --warn: #E3A11F; --bad: #D64541;
   }
   *, *::before, *::after { box-sizing: border-box; }
-  body  { font-family: 'IBM Plex Sans', system-ui, Helvetica, Arial, sans-serif;
+  body  { font-family: 'Source Sans 3', system-ui, Helvetica, Arial, sans-serif;
           background: var(--bg-soft); color: var(--body); margin: 0; padding: 0 28px 40px;
           line-height: 1.55; }
   .brandbar { display: flex; align-items: center; gap: 14px; padding: 18px 0 16px;
@@ -1049,14 +1151,55 @@ function build_html(array $results, array $urlToGroup, array $agg,
     display: grid; place-items: center; }
   .brandbar .logo::before { content: ''; width: 20px; height: 20px; border-radius: 50%;
     background: var(--bg-soft); }
-  .brandbar .brandname { font-family: 'Space Grotesk', sans-serif; font-weight: 700;
+  .brandbar .brandname { font-family: 'Poppins', sans-serif; font-weight: 700;
     font-size: 17px; color: var(--ink); }
   .brandbar .brandctx { color: var(--soft); font-size: 13px; }
   .brandbar .sp { flex: 1; }
-  h1    { font-family: 'Space Grotesk', sans-serif; font-size: 1.6rem; margin: 6px 0 4px; color: var(--ink); }
+  h1    { font-family: 'Poppins', sans-serif; font-size: 1.6rem; margin: 6px 0 4px; color: var(--ink); }
   .meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 22px; line-height: 1.6; }
   .meta strong { color: var(--ink); }
-  .section-title { font-family: 'Space Grotesk', sans-serif; font-size: 0.8rem; font-weight: 700;
+
+  /* friendly run-metadata card row */
+  .report-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                 gap: 12px; margin: 14px 0 26px; }
+  .rm-item { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+             padding: 12px 16px; min-width: 0; }
+  .rm-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: .07em;
+              color: var(--soft); font-weight: 600; }
+  .rm-value { font-family: 'Poppins', sans-serif; font-weight: 600; color: var(--ink);
+              font-size: 0.95rem; margin-top: 3px; overflow-wrap: anywhere; }
+  .rm-site { grid-column: 1 / -1; }
+  .rm-site .rm-value { word-break: break-all; }
+  .rm-value a { color: var(--accent); text-decoration: none; }
+  .rm-value a:hover { text-decoration: underline; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 6px; border-bottom: 2px solid var(--line);
+          margin: 26px 0 4px; flex-wrap: wrap; }
+  .tab { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 0.92rem;
+         cursor: pointer; background: none; border: 0; color: var(--muted);
+         padding: 11px 18px; border-radius: 10px 10px 0 0; margin-bottom: -2px;
+         border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-count { display: inline-block; min-width: 20px; padding: 1px 7px; margin-left: 6px;
+               font-size: 0.72rem; font-weight: 700; border-radius: 999px;
+               background: var(--bg-soft); color: var(--muted); }
+  .tab.active .tab-count { background: var(--accent-tint); color: var(--accent); }
+  .tab-panel[hidden] { display: none; }
+  .scope-note { color: var(--body); font-size: 0.9rem; margin: 16px 0 4px; max-width: 780px; }
+  .scope-empty { color: var(--good); font-size: 0.9rem; margin: 8px 0 0; }
+
+  /* mobile: keep the two tabs side by side on one row */
+  @media (max-width: 600px) {
+    body { padding: 0 14px 32px; }
+    .tabs { flex-wrap: nowrap; gap: 4px; }
+    .tab { flex: 1 1 0; min-width: 0; padding: 10px 6px; font-size: 0.85rem;
+           text-align: center; white-space: nowrap; }
+    .tab-count { margin-left: 5px; padding: 1px 6px; }
+    .report-meta { gap: 8px; }
+  }
+  .section-title { font-family: 'Poppins', sans-serif; font-size: 0.8rem; font-weight: 700;
                    color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; }
   .card  { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
@@ -1064,7 +1207,7 @@ function build_html(array $results, array $urlToGroup, array $agg,
   a.card { text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
   a.card:hover { border-color: var(--accent-line); box-shadow: 0 2px 10px rgba(13,138,126,.12); }
   .card-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-  .card-score { font-family: 'Space Grotesk', sans-serif; font-size: 2.4rem; font-weight: 700;
+  .card-score { font-family: 'Poppins', sans-serif; font-size: 2.4rem; font-weight: 700;
                 line-height: 1.1; margin: 4px 0; color: var(--ink); }
   .card-sub   { font-size: 0.7rem; color: var(--soft); }
   .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px;
@@ -1142,19 +1285,39 @@ function build_html(array $results, array $urlToGroup, array $agg,
   <span class="brandctx">Accessibility report · powered by 2create</span>
 </header>
 <h1>Accessibility Bulk Report</h1>
-<div class="meta">
-  Sitemap: <strong>$sitemapEsc</strong> &nbsp;|&nbsp;
-  Pages tested: <strong>$totalPages</strong> &nbsp;|&nbsp;
-  Engine: <strong>axe-core $engineEsc</strong> &nbsp;|&nbsp;
-  Standard: <strong>$tagsEsc</strong><br>
-  Generated: <strong>$generatedAt</strong>
+<div class="report-meta">
+  <div class="rm-item rm-site">
+    <div class="rm-label">Site / sitemap</div>
+    <div class="rm-value"><a href="$sitemapEsc" target="_blank" rel="noopener">$sitemapEsc</a></div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Pages tested</div>
+    <div class="rm-value">$totalPages</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Standard</div>
+    <div class="rm-value" title="$tagsEsc">$stdLabel</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Engine</div>
+    <div class="rm-value">axe-core $engineEsc</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Generated</div>
+    <div class="rm-value">$generatedAt</div>
+  </div>
 </div>
 
-$cards
-$groupHtml
-$topHtml
-$reviewHtml
-$detail
+$diffHtml
+
+<div class="tabs" role="tablist">
+  <button class="tab active" role="tab" aria-selected="true" aria-controls="panel-code"
+          onclick="showTab('code', this)">Code related <span class="tab-count">$codeViol</span></button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="panel-design"
+          onclick="showTab('design', this)">Design related <span class="tab-count">$designViol</span></button>
+</div>
+$codePanel
+$designPanel
 
 <div class="legend">
   <span class="dot" style="background:#cf4a3a"></span> Critical &nbsp;
@@ -1169,6 +1332,17 @@ $detail
   </div>
 </div>
 <script>
+function showTab(cat, btn) {
+  document.querySelectorAll('.tab-panel').forEach(function (p) {
+    p.hidden = (p.id !== 'panel-' + cat);
+  });
+  document.querySelectorAll('.tab').forEach(function (t) {
+    var on = t === btn;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
 function toggleRow(tr) {
   var d = tr.nextElementSibling;
   if (!d || !d.classList.contains('detail-row')) return;
