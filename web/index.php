@@ -214,7 +214,7 @@
   <header class="hero">
     <span class="eyebrow">axe-core · WCAG</span>
     <h1>Accessibility Bulk Scanner</h1>
-    <p>Audit every page of a website against WCAG, driven by its XML sitemap. Enter a website address — the sitemap is found automatically — or paste a sitemap URL directly, then watch the results appear live.</p>
+    <p>Audit every page of a website against WCAG. Enter a website address — its XML sitemap is found automatically, or the scanner crawls the site's links when there isn't one — or paste a sitemap URL directly, then watch the results appear live.</p>
   </header>
 
   <div class="card">
@@ -262,6 +262,11 @@
         <div class="field check full">
           <input type="checkbox" id="no-best-practice" name="no-best-practice">
           <label for="no-best-practice" style="font-weight:400">Test formal WCAG rules only (drop axe <code>best-practice</code> tag)</label>
+        </div>
+
+        <div class="field check full">
+          <input type="checkbox" id="crawl" name="crawl">
+          <label for="crawl" style="font-weight:400">Crawl the site directly — follow links instead of the sitemap <span class="hint">(used automatically when no sitemap is found)</span></label>
         </div>
       </div>
 
@@ -354,7 +359,7 @@ form.addEventListener('submit', (e) => {
   const data = new FormData(form);
   const params = new URLSearchParams();
   for (const [k, v] of data.entries()) {
-    if (k === 'no-best-practice') { params.set(k, '1'); continue; }
+    if (k === 'no-best-practice' || k === 'crawl') { params.set(k, '1'); continue; }
     if (v !== '') params.set(k, v);
   }
   params.set('token', scanToken);

@@ -110,36 +110,48 @@ if ($problem !== null) {
     fail($problem);
 }
 
-// ── Resolve the sitemap (direct URL, or auto-discover from a site URL) ────────
-if (!looks_like_sitemap($args['sitemap'])) {
-    sse('status', ['message' => 'Looking for the sitemap…']);
-}
+// ── Discover pages: from the XML sitemap, or by crawling the site ─────────────
+// `crawl` forces an HTML crawl; otherwise we auto-discover a sitemap and only
+// crawl as a fallback when none is found. crawl_site()/collect_urls() print
+// progress to stdout, so each call is output-buffered out of the SSE stream.
+$crawl   = isset($_GET['crawl']) && $_GET['crawl'] !== '0';
+$startUrl = $args['sitemap'];
+$urls = [];
+$urlToGroup = [];
+
 try {
-    ob_start();
-    $resolved = discover_sitemap($args['sitemap']);
-    ob_end_clean();
+    if (!$crawl) {
+        if (!looks_like_sitemap($startUrl)) {
+            sse('status', ['message' => 'Looking for the sitemap…']);
+        }
+        ob_start();
+        $resolved = discover_sitemap($startUrl);
+        ob_end_clean();
+        if ($resolved !== null) {
+            $args['sitemap'] = $resolved;
+            sse('status', ['message' => 'Crawling the sitemap…']);
+            ob_start();
+            [$urls, $urlToGroup] = collect_urls($resolved, $args['max-urls']);
+            ob_end_clean();
+        }
+    }
+    // Forced crawl, or fallback when no sitemap was found (or it was empty).
+    if (!$urls) {
+        $args['sitemap'] = $startUrl;
+        sse('status', ['message' => $crawl
+            ? 'Crawling the site to discover pages…'
+            : 'No sitemap found — crawling the site to discover pages…']);
+        ob_start();
+        [$urls, $urlToGroup] = crawl_site($startUrl, $args['max-urls'], 0);
+        ob_end_clean();
+    }
 } catch (Throwable $e) {
     if (ob_get_level() > 0) ob_end_clean();
-    $resolved = null;
-}
-if ($resolved === null) {
-    fail("Could not find a sitemap for '{$args['sitemap']}'. "
-       . 'Try entering the sitemap URL directly (e.g. https://example.com/sitemap_index.xml).');
-}
-$args['sitemap'] = $resolved;
-
-// ── Run the scan ─────────────────────────────────────────────────────────────
-try {
-    sse('status', ['message' => 'Crawling the sitemap…']);
-    // collect_urls() prints crawl progress to stdout; keep it out of the stream.
-    ob_start();
-    [$urls, $urlToGroup] = collect_urls($args['sitemap'], $args['max-urls']);
-    ob_end_clean();
-} catch (Throwable $e) {
-    fail('Could not read the sitemap: ' . $e->getMessage());
+    fail('Could not discover pages to scan: ' . $e->getMessage());
 }
 if (!$urls) {
-    fail('No page URLs found. Verify the sitemap URL is reachable and valid.');
+    fail('No page URLs found. The site may be unreachable, block automated '
+       . 'requests, or have no crawlable links. Try a sitemap URL directly.');
 }
 
 $total = count($urls);
