@@ -76,7 +76,7 @@ if (!preg_match('/^[A-Za-z0-9\-]{8,64}$/', $token)) {
 
 $args = [
     'sitemap'          => $sitemap,
-    'tags'             => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
+    'tags'             => 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice',
     'no-best-practice' => isset($_GET['no-best-practice']) && $_GET['no-best-practice'] !== '0',
     'max-urls'         => isset($_GET['max-urls']) && $_GET['max-urls'] !== ''
                             ? max(1, min(5000, (int)$_GET['max-urls'])) : null,

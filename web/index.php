@@ -35,10 +35,10 @@
     box-shadow:0 8px 20px rgba(13,138,126,.18);
   }
   header.hero h1 {
-    font-family:'Poppins', sans-serif; font-weight:700; font-size:44px;
+    font-family:'Poppins', sans-serif; font-weight:700; font-size:clamp(30px, 6.5vw, 44px);
     margin:0 0 14px; letter-spacing:-.02em; color:var(--ink); line-height:1.05;
   }
-  header.hero p { margin:0 auto; max-width:560px; font-size:18px; color:var(--muted); }
+  header.hero p { margin:0 auto; max-width:560px; font-size:clamp(16px, 3.6vw, 18px); color:var(--muted); }
   header.hero .eyebrow {
     display:inline-block; font-family:'Poppins', sans-serif; font-size:12px; font-weight:600;
     letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
@@ -101,6 +101,28 @@
   button.primary:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
   .note { color:var(--muted); font-size:13px; }
 
+  /* collapsed form — shown while a scan runs and after it finishes */
+  .formSummary { display:none; align-items:center; gap:12px; }
+  form.minimized .grid, form.minimized .actions { display:none; }
+  form.minimized .formSummary { display:flex; }
+  .formSummary .label { flex:none; font-family:'Poppins', sans-serif; font-weight:600; font-size:14px; color:var(--ink); }
+  .formSummary .target {
+    flex:1; min-width:0; color:var(--body);
+    font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:13px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  button.editBtn {
+    margin-left:auto; flex:none; cursor:pointer;
+    font-family:'Poppins', sans-serif; font-weight:600; font-size:13px;
+    background:#fff; color:var(--accent); border:1px solid var(--accent-line);
+    padding:9px 18px; border-radius:999px; transition:background .15s, border-color .15s;
+  }
+  button.editBtn:hover { background:var(--accent-tint); border-color:var(--accent); }
+  @media (max-width:640px) {
+    .formSummary { flex-wrap:wrap; }
+    .formSummary .target { flex-basis:100%; order:3; }
+  }
+
   /* progress + results */
   #run { display:none; margin-top:26px; }
   #run.active { display:block; }
@@ -152,6 +174,39 @@
   .errbox { background:#FBEEEB; border:1px solid #E7C3BC; color:#8A2E20; padding:14px 16px; border-radius:var(--radius-sm); white-space:pre-wrap; }
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:34px; }
   footer a { color:var(--accent); }
+
+  /* ── Mobile ──────────────────────────────────────────────────────────────── */
+  @media (max-width:640px) {
+    .wrap { padding:36px 14px 56px; }
+    header.hero { margin-bottom:24px; }
+    header.hero::before { width:56px; height:56px; margin-bottom:18px; font-size:26px; }
+    header.hero .eyebrow { margin-bottom:14px; }
+
+    .card { padding:20px; border-radius:16px; }
+    form .grid { grid-template-columns:1fr; gap:16px; }   /* single column */
+    #sitemap { padding:14px 15px; }
+
+    /* full-width primary action for an easy tap target */
+    .actions { margin-top:20px; flex-direction:column; align-items:stretch; gap:12px; }
+    .actions .note { text-align:center; }
+    button.primary { width:100%; padding:15px 20px; }
+
+    /* keep the Stop button on its own line, right-aligned */
+    .statusbar { flex-wrap:wrap; }
+    button.stop { margin-left:auto; }
+
+    .summary { grid-template-columns:1fr 1fr; }           /* two stats per row */
+
+    /* stacked, full-width download/report buttons */
+    .resultActions { flex-direction:column; }
+    .resultActions a.btn { text-align:center; }
+
+    iframe.report { height:70vh; min-height:420px; }
+  }
+
+  @media (max-width:340px) {
+    .summary { grid-template-columns:1fr; }               /* one stat per row */
+  }
 </style>
 </head>
 <body>
@@ -164,6 +219,12 @@
 
   <div class="card">
     <form id="form">
+      <div class="formSummary" id="formSummary">
+        <span class="label" id="scanLabel">Scanning</span>
+        <span class="target" id="scanTarget"></span>
+        <button type="button" class="editBtn" id="editBtn">Edit &amp; rescan</button>
+      </div>
+
       <div class="grid">
         <div class="field full">
           <label for="sitemap">Website or sitemap URL <span class="hint">— enter a site address to auto-find its sitemap, or paste a sitemap URL</span></label>
@@ -174,11 +235,11 @@
         <div class="field">
           <label for="standard">WCAG standard</label>
           <select id="standard" name="standard">
-            <option value="wcag21aa" selected>WCAG 2.1 AA (recommended)</option>
+            <option value="wcag22aa" selected>WCAG 2.2 AA (recommended)</option>
+            <option value="wcag21aa">WCAG 2.1 AA</option>
             <option value="wcag2a">WCAG 2.0 A</option>
             <option value="wcag2aa">WCAG 2.0 AA</option>
             <option value="wcag21a">WCAG 2.1 A</option>
-            <option value="wcag22aa">WCAG 2.2 AA</option>
             <option value="section508">Section 508</option>
           </select>
         </div>
@@ -245,6 +306,9 @@
 const form = document.getElementById('form');
 const runEl = document.getElementById('run');
 const submitBtn = document.getElementById('submitBtn');
+const editBtn = document.getElementById('editBtn');
+const scanLabel = document.getElementById('scanLabel');
+const scanTarget = document.getElementById('scanTarget');
 const spinner = document.getElementById('spinner');
 const statusMsg = document.getElementById('statusMsg');
 const stopBtn = document.getElementById('stopBtn');
@@ -265,6 +329,11 @@ let stopping = false;
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   if (es) es.close();
+
+  // collapse the form so the live progress takes over the card
+  scanLabel.textContent = 'Scanning';
+  scanTarget.textContent = document.getElementById('sitemap').value.trim();
+  form.classList.add('minimized');
 
   // reset UI
   runEl.classList.add('active');
@@ -318,6 +387,7 @@ form.addEventListener('submit', (e) => {
   es.addEventListener('done', (ev) => {
     const d = JSON.parse(ev.data);
     finish();
+    scanLabel.textContent = d.stopped ? 'Stopped' : 'Scanned';
     statusMsg.textContent = d.stopped
       ? `Scan stopped — report covers the ${d.summary.pages} page${d.summary.pages === 1 ? '' : 's'} scanned so far.`
       : 'Scan complete.';
@@ -337,6 +407,12 @@ form.addEventListener('submit', (e) => {
       showError('The connection to the scanner was lost. Check the server console for details.');
     }
   });
+});
+
+// Expand the form again so settings can be changed / a new scan started.
+editBtn.addEventListener('click', () => {
+  form.classList.remove('minimized');
+  document.getElementById('sitemap').focus();
 });
 
 stopBtn.addEventListener('click', () => {
@@ -440,6 +516,7 @@ function renderActions(d) {
 
 function showError(msg) {
   finish();
+  scanLabel.textContent = 'Scan failed';
   statusMsg.textContent = 'Scan failed.';
   errorEl.textContent = msg;
   errorEl.hidden = false;

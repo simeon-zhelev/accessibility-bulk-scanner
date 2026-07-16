@@ -60,7 +60,7 @@ function parse_args(array $argv): array {
         'url'         => null,         // site URL — sitemap is auto-discovered
         'crawl'       => false,        // force an HTML crawl (skip sitemap)
         'crawl-depth' => 0,            // link depth for the crawl (0 = unlimited)
-        'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice',
+        'tags'        => 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice',
         'standard'    => null,         // shortcut that overrides --tags
         'no-best-practice' => false,
         'max-urls'    => null,
@@ -103,10 +103,10 @@ Options:
   --crawl-depth=N      Limit crawl link depth (0 = unlimited, the default;
                        bounded by --max-urls, or 2000 pages when unset)
   --standard=S         Convenience preset, sets --tags:
-                         wcag2a | wcag2aa | wcag21a | wcag21aa (default) |
-                         wcag22aa | section508
+                         wcag2a | wcag2aa | wcag21a | wcag21aa |
+                         wcag22aa (default) | section508
   --tags=LIST          Explicit axe-core tag list, comma-separated
-                       (default: wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice)
+                       (default: wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice)
   --no-best-practice   Drop the 'best-practice' tag (WCAG rules only)
   --max-urls=N         Cap total pages scanned (great for a trial run)
   --concurrency=N      Pages scanned in parallel (default: 4)

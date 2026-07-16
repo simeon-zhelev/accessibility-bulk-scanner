@@ -77,7 +77,7 @@ No Composer, no Deque account, no API key.
 |---|---|---|
 | `--sitemap` | *(required)* | A sitemap index, any child sitemap, **or a plain site URL** whose sitemap is auto-discovered |
 | `--url` | — | Alias for `--sitemap`: a site URL to auto-discover the sitemap from |
-| `--standard` | `wcag21aa` | Preset that sets the rule tags: `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`, `section508` |
+| `--standard` | `wcag22aa` | Preset that sets the rule tags: `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`, `section508` |
 | `--tags` | *(see below)* | Explicit axe-core tag list, overrides `--standard` |
 | `--no-best-practice` | off | Drop the `best-practice` tag (test only formal WCAG rules) |
 | `--max-urls` | all | Cap pages tested — useful for a trial run |
@@ -89,7 +89,7 @@ No Composer, no Deque account, no API key.
 | `--csv` | `accessibility_report.csv` | CSV export path |
 | `--pdf[=FILE]` | off | Also export a PDF, rendered from the HTML via headless Chromium. Bare `--pdf` derives the name from `--output` (e.g. `report.pdf`) |
 
-Default tag list when `--standard` is omitted: `wcag2a,wcag2aa,wcag21a,wcag21aa,best-practice`.
+Default tag list when `--standard` is omitted: `wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa,best-practice`.
 
 ## Choosing concurrency
 
