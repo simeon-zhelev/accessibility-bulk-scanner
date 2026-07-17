@@ -1238,7 +1238,7 @@ HTML;
 }
 
 /** "Changes since baseline" block, rendered above the tabs when comparing. */
-function comparison_section(array $diff): string {
+function comparison_section(array $diff, bool $client = false): string {
     $fmtDelta = function (int $d): string {
         if ($d < 0) return '<span class="delta good">▼ ' . abs($d) . '</span>';
         if ($d > 0) return '<span class="delta bad">▲ ' . $d . '</span>';
@@ -1278,9 +1278,10 @@ function comparison_section(array $diff): string {
 
     $fixed = (int)$c['fixed']; $newc = (int)$c['new'];
     $improved = (int)$c['improved']; $worse = (int)$c['worse'];
+    $heading = $client ? 'Progress since your last review' : 'Changes since baseline';
     return <<<HTML
 <section class="diff-section">
-  <div class="section-title">Changes since baseline <span class="hint-inline">— compared with $baseLabel</span></div>
+  <div class="section-title">$heading <span class="hint-inline">— compared with $baseLabel</span></div>
   <div class="diff-tiles">
     $codeTile
     $designTile
@@ -1294,6 +1295,93 @@ function comparison_section(array $diff): string {
   $table
 </section>
 HTML;
+}
+
+/**
+ * Plain-language title + one-line recommendation for a rule, for the
+ * client-facing report. Falls back to axe's own help text for rules not in
+ * the curated map. Keep entries short and non-technical.
+ */
+function client_finding(string $ruleId, string $axeHelp): array {
+    static $map = [
+        'image-alt'          => ['Images missing alternative text', 'Add descriptive alt text so screen-reader users know what each image shows.'],
+        'color-contrast'     => ['Low colour contrast', 'Increase the contrast between text and its background so it is easy to read.'],
+        'color-contrast-enhanced' => ['Low colour contrast (AAA)', 'Raise text/background contrast to the enhanced (AAA) level.'],
+        'link-name'          => ['Links without a clear label', 'Give every link meaningful text that describes where it goes.'],
+        'button-name'        => ['Buttons without a label', 'Ensure each button has a clear, descriptive name.'],
+        'label'              => ['Form fields without labels', 'Associate a visible label with each form field.'],
+        'landmark-one-main'  => ['Missing main landmark', 'Wrap each page’s primary content in a <main> landmark.'],
+        'region'             => ['Content outside landmarks', 'Place all content inside landmark regions (header, nav, main, footer).'],
+        'heading-order'      => ['Skipped heading levels', 'Use headings in order (h1 → h2 → h3) so the page outline is logical.'],
+        'page-has-heading-one' => ['Missing top-level heading', 'Give each page a single, descriptive <h1>.'],
+        'html-has-lang'      => ['Page language not set', 'Set the page language (e.g. lang="en") so assistive tech reads it correctly.'],
+        'document-title'     => ['Missing page title', 'Give every page a unique, descriptive title.'],
+        'duplicate-id'       => ['Duplicate element IDs', 'Make element IDs unique so assistive tech and scripts behave predictably.'],
+        'duplicate-id-active' => ['Duplicate IDs on interactive elements', 'Make IDs unique, especially on links, buttons and form fields.'],
+        'list'               => ['Malformed lists', 'Use proper list markup so grouped items are announced as a list.'],
+        'listitem'           => ['List items outside a list', 'Ensure list items sit inside a proper <ul>/<ol>.'],
+        'aria-required-attr' => ['Incomplete ARIA attributes', 'Provide the ARIA attributes each component needs to work with assistive tech.'],
+        'aria-required-children' => ['Incomplete ARIA structure', 'Give ARIA components their required child roles.'],
+        'link-in-text-block' => ['Links not distinguishable from text', 'Make links visually distinct from surrounding text (not by colour alone).'],
+        'aria-hidden-focus'  => ['Hidden elements still focusable', 'Keep hidden content out of the keyboard tab order.'],
+        'frame-title'        => ['Frames without a title', 'Give each iframe a descriptive title.'],
+    ];
+    return isset($map[$ruleId])
+        ? ['title' => $map[$ruleId][0], 'rec' => $map[$ruleId][1]]
+        : ['title' => $axeHelp, 'rec' => 'Review and resolve the issues flagged for this check.'];
+}
+
+/**
+ * Render findings grouped by severity as short, client-friendly lists. Caps
+ * each severity to $cap distinct issues and summarises the remainder.
+ */
+function findings_by_severity(array $rules, int $cap = 5): string {
+    $buckets = ['critical'=>[], 'serious'=>[], 'moderate'=>[], 'minor'=>[]];
+    foreach ($rules as $id => $a) {
+        $imp = $a['impact'] ?? 'minor';
+        if (!isset($buckets[$imp])) $imp = 'minor';
+        $buckets[$imp][$id] = $a;
+    }
+    $labels = ['critical'=>'Critical', 'serious'=>'Serious', 'moderate'=>'Moderate', 'minor'=>'Minor'];
+    $html = '';
+    foreach ($buckets as $imp => $set) {
+        if (!$set) continue;
+        $items = ''; $shown = 0;
+        foreach ($set as $id => $a) {
+            if ($shown >= $cap) break;
+            $f     = client_finding($id, $a['help'] ?? $id);
+            $title = htmlspecialchars($f['title']);
+            $rec   = htmlspecialchars($f['rec']);
+            $url   = htmlspecialchars($a['helpUrl'] ?? '');
+            $pages = (int)($a['pages'] ?? 0);
+            $pageStr = $pages > 0 ? "<span class=\"finding-pages\">on $pages page" . ($pages === 1 ? '' : 's') . '</span>' : '';
+            $learn = $url !== '' ? " <a href=\"$url\" target=\"_blank\" rel=\"noopener\">Learn more →</a>" : '';
+            $items .= "<li class=\"finding\"><div class=\"finding-title\">$title $pageStr</div>"
+                    . "<div class=\"finding-rec\">$rec$learn</div></li>";
+            $shown++;
+        }
+        $more = count($set) - $shown;
+        $moreLine = $more > 0
+            ? "<li class=\"finding-more\">+ $more more {$labels[$imp]} item" . ($more === 1 ? '' : 's') . '</li>'
+            : '';
+        $color = impact_color($imp);
+        $html .= "<div class=\"sev-group\"><div class=\"sev-head\">"
+               . "<span class=\"sev-dot\" style=\"background:$color\"></span>{$labels[$imp]}"
+               . "<span class=\"sev-count\">" . count($set) . "</span></div>"
+               . "<ul class=\"finding-list\">$items$moreLine</ul></div>";
+    }
+    return $html !== '' ? $html : '<p class="scope-empty">No issues found in this area.</p>';
+}
+
+/** One-line plain-language verdict derived from the totals. */
+function verdict_line(array $agg): string {
+    $total = (int)($agg['totals']['violations'] ?? 0);
+    $code  = $agg['catTotals']['code'] ?? [];
+    $high  = (int)($code['critical'] ?? 0) + (int)($code['serious'] ?? 0);
+    if ($total === 0) return 'No automated accessibility issues were detected — a strong result. Manual checks are still recommended for full coverage.';
+    if ($high === 0)  return 'A solid foundation — the recommended fixes are mostly moderate and quick to address.';
+    if ($high <= 3)   return 'Good overall, with a few high-priority fixes recommended below.';
+    return 'Several high-priority accessibility fixes are recommended — start with the Critical and Serious items below.';
 }
 
 function build_html(array $results, array $urlToGroup, array $agg,
@@ -1609,6 +1697,364 @@ function sortTable(th) {
 HTML;
 }
 
+function build_client_html(array $results, array $urlToGroup, array $agg,
+                    string $sitemapUrl, string $generatedAt,
+                    string $tags, ?string $engine, ?array $diff = null): string {
+    $totalPages = count($results);
+    $cat        = $agg['catTotals'] ?? ['code'=>[], 'design'=>[]];
+
+    // Concise, client-facing sections: code = in scope (primary), design =
+    // separate scope. Findings are grouped by severity as short lists.
+    $verdict       = verdict_line($agg);
+    $glanceCards   = impact_cards($agg['totals']);
+    $codeFindings  = findings_by_severity($agg['codeRules'] ?? []);
+    $designHasIssues = !empty($agg['designRules']);
+    $designFindings = $designHasIssues
+        ? findings_by_severity($agg['designRules'])
+        : '<p class="scope-empty">No colour-contrast issues were found — no design changes are needed for contrast at this time.</p>';
+    $codeViol      = (int)($cat['code']['violations'] ?? 0);
+    $designViol    = (int)($cat['design']['violations'] ?? 0);
+
+    $diffHtml  = $diff ? comparison_section($diff, true) : '';
+    $sitemapEsc= htmlspecialchars($sitemapUrl);
+    $tagsEsc   = htmlspecialchars($tags);
+    $stdLabel  = htmlspecialchars(standard_label($tags));
+    $engineEsc = htmlspecialchars($engine ?? 'axe-core');
+
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accessibility Report — $generatedAt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Website Health Check report theme (teal) ── */
+  :root {
+    --ink: #0F1E33; --body: #33415C; --muted: #64748B; --soft: #94A3B8;
+    --line: #E6EAF1; --line-strong: #C9D4E5; --bg: #ffffff; --bg-soft: #F5F7FA;
+    --accent: #0D8A7E; --accent-tint: #E6F4F2; --accent-line: #BFE3DE;
+    --good: #1F9D5B; --warn: #E3A11F; --bad: #D64541;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body  { font-family: 'Source Sans 3', system-ui, Helvetica, Arial, sans-serif;
+          background: var(--bg-soft); color: var(--body); margin: 0; padding: 0 28px 40px;
+          line-height: 1.55; }
+  .brandbar { display: flex; align-items: center; gap: 14px; padding: 18px 0 16px;
+              margin-bottom: 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .brandbar .logo { width: 30px; height: 30px; border-radius: 50%; flex: none;
+    background: conic-gradient(var(--good) 0 76%, var(--line) 76% 100%);
+    display: grid; place-items: center; }
+  .brandbar .logo::before { content: ''; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--bg-soft); }
+  .brandbar .brandname { font-family: 'Poppins', sans-serif; font-weight: 700;
+    font-size: 17px; color: var(--ink); }
+  .brandbar .brandctx { color: var(--soft); font-size: 13px; }
+  .brandbar .sp { flex: 1; }
+  h1    { font-family: 'Poppins', sans-serif; font-size: 1.6rem; margin: 6px 0 4px; color: var(--ink); }
+  .meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 22px; line-height: 1.6; }
+  .meta strong { color: var(--ink); }
+
+  /* friendly run-metadata card row */
+  .report-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                 gap: 12px; margin: 14px 0 26px; }
+  .rm-item { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+             padding: 12px 16px; min-width: 0; }
+  .rm-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: .07em;
+              color: var(--soft); font-weight: 600; }
+  .rm-value { font-family: 'Poppins', sans-serif; font-weight: 600; color: var(--ink);
+              font-size: 0.95rem; margin-top: 3px; overflow-wrap: anywhere; }
+  .rm-site { grid-column: 1 / -1; }
+  .rm-site .rm-value { word-break: break-all; }
+  .rm-value a { color: var(--accent); text-decoration: none; }
+  .rm-value a:hover { text-decoration: underline; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 6px; border-bottom: 2px solid var(--line);
+          margin: 26px 0 4px; flex-wrap: wrap; }
+  .tab { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 0.92rem;
+         cursor: pointer; background: none; border: 0; color: var(--muted);
+         padding: 11px 18px; border-radius: 10px 10px 0 0; margin-bottom: -2px;
+         border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-count { display: inline-block; min-width: 20px; padding: 1px 7px; margin-left: 6px;
+               font-size: 0.72rem; font-weight: 700; border-radius: 999px;
+               background: var(--bg-soft); color: var(--muted); }
+  .tab.active .tab-count { background: var(--accent-tint); color: var(--accent); }
+  .tab-panel[hidden] { display: none; }
+  .scope-note { color: var(--body); font-size: 0.9rem; margin: 4px 0 14px; max-width: 780px; }
+  .scope-empty { color: var(--good); font-size: 0.9rem; margin: 8px 0 0; }
+
+  /* client-format sections */
+  .verdict { font-family: 'Poppins', sans-serif; font-size: 1.05rem; color: var(--ink);
+             margin: 6px 0 16px; max-width: 820px; }
+  .scope { margin: 30px 0; }
+  .scope-out { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 14px;
+               padding: 4px 20px 20px; }
+  .scope-tag { display: inline-block; font-family: 'Poppins', sans-serif; font-size: 0.6rem;
+               font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+               padding: 3px 9px; border-radius: 999px; vertical-align: middle; margin-right: 8px; }
+  .scope-tag.in  { background: var(--accent-tint); color: var(--accent); }
+  .scope-tag.out { background: #FBF1DC; color: #9a6a12; }
+  .sev-group { margin: 14px 0; }
+  .sev-head { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 0.95rem;
+              color: var(--ink); display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .sev-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .sev-count { font-size: 0.72rem; font-weight: 700; color: var(--muted);
+               background: var(--bg-soft); border-radius: 999px; padding: 1px 8px; }
+  .finding-list { list-style: none; margin: 0; padding: 0; }
+  .finding { border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+             padding: 12px 15px; margin: 8px 0; }
+  .finding-title { font-family: 'Poppins', sans-serif; font-weight: 600; color: var(--ink); font-size: 0.95rem; }
+  .finding-pages { font-family: 'Source Sans 3', sans-serif; font-weight: 400; font-size: 0.78rem; color: var(--soft); }
+  .finding-rec { font-size: 0.88rem; color: var(--body); margin-top: 3px; }
+  .finding-rec a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .finding-rec a:hover { text-decoration: underline; }
+  .finding-more { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0 2px; }
+
+  /* changes-since-baseline block */
+  .diff-section { border: 1px solid var(--accent-line); background: var(--accent-tint);
+                  border-radius: 14px; padding: 6px 18px 18px; margin: 20px 0 6px; }
+  .diff-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+                gap: 12px; margin-top: 6px; }
+  .diff-tile { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  .diff-nums { font-family: 'Poppins', sans-serif; font-size: 1.1rem; color: var(--ink); margin-top: 4px;
+               display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .diff-nums .was { color: var(--soft); font-weight: 600; }
+  .diff-nums .arrow { color: var(--soft); }
+  .delta { font-size: 0.85rem; font-weight: 700; }
+  .delta.good { color: #24824a; }
+  .delta.bad  { color: #c23a2c; }
+  .delta.flat { color: var(--soft); }
+  .diff-status { display: inline-block; font-size: 0.66rem; font-weight: 700; padding: 2px 8px;
+                 border-radius: 999px; text-transform: capitalize; }
+  .s-fixed, .s-improved { background: #E6F4EA; color: #24824a; }
+  .s-new, .s-worse { background: #FBEAEA; color: #c23a2c; }
+  .s-unchanged { background: var(--bg-soft); color: var(--muted); }
+
+  /* mobile: keep the two tabs side by side on one row */
+  @media (max-width: 600px) {
+    body { padding: 0 14px 32px; }
+    .tabs { flex-wrap: nowrap; gap: 4px; }
+    .tab { flex: 1 1 0; min-width: 0; padding: 10px 6px; font-size: 0.85rem;
+           text-align: center; white-space: nowrap; }
+    .tab-count { margin-left: 5px; padding: 1px 6px; }
+    .report-meta { gap: 8px; }
+  }
+  .section-title { font-family: 'Poppins', sans-serif; font-size: 0.8rem; font-weight: 700;
+                   color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin: 32px 0 10px; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card  { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+           padding: 16px 22px; min-width: 148px; flex: 1; }
+  a.card { text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
+  a.card:hover { border-color: var(--accent-line); box-shadow: 0 2px 10px rgba(13,138,126,.12); }
+  .card-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .card-score { font-family: 'Poppins', sans-serif; font-size: 2.4rem; font-weight: 700;
+                line-height: 1.1; margin: 4px 0; color: var(--ink); }
+  .card-sub   { font-size: 0.7rem; color: var(--soft); }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px;
+           font-size: 0.85rem; color: var(--muted); }
+  .table-wrap { overflow-x: auto; border-radius: 12px; background: var(--bg);
+                border: 1px solid var(--line); margin-top: 4px; }
+  table  { width: 100%; border-collapse: collapse; font-size: 0.77rem; color: var(--body); }
+  th, td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--line); }
+  th     { background: var(--bg-soft); color: var(--muted); font-weight: 600;
+           text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+  table.sortable th { cursor: pointer; user-select: none; }
+  table.sortable th:hover { color: var(--accent); }
+  th.th-left { text-align: left; }
+  th.sort-asc::after  { content: " ▲"; font-size: 0.6rem; opacity: .7; }
+  th.sort-desc::after { content: " ▼"; font-size: 0.6rem; opacity: .7; }
+  td.url-cell { text-align: left; max-width: 320px; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  td.url-cell a { color: var(--accent); text-decoration: none; }
+  td.url-cell a:hover { text-decoration: underline; }
+  td.gname { text-align: left; font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+  td.num   { color: var(--soft); width: 44px; white-space: nowrap; }
+  tr:hover td { background: var(--accent-tint); }
+  tr.expandable { cursor: pointer; }
+  .caret { display: inline-block; margin-right: 4px; color: var(--accent);
+           font-size: 0.7rem; transition: transform .15s; }
+  tr.open .caret { transform: rotate(90deg); }
+  .detail-row > td { text-align: left; background: var(--bg-soft); padding: 4px 14px 10px; }
+  .detail-row:hover > td { background: var(--bg-soft); }
+  .hint-inline { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--soft); }
+  td.opp-title { text-align: left; }
+  td.opp-title a { color: var(--accent); text-decoration: none; }
+  td.opp-title a:hover { text-decoration: underline; }
+  .rule-id { font-size: 0.66rem; color: var(--soft); font-family: 'IBM Plex Mono', ui-monospace, monospace; margin-top: 2px; }
+  .pgbar  { position: relative; background: var(--bg-soft); border: 1px solid var(--line);
+            border-radius: 6px; height: 18px; min-width: 160px; overflow: hidden; }
+  .pgfill { height: 100%; border-radius: 6px; opacity: .85; }
+  .pgtext { position: absolute; inset: 0; display: flex; align-items: center;
+            justify-content: center; font-size: 0.7rem; color: var(--ink); }
+  .opp-container { display: flex; flex-direction: column; gap: 6px; }
+  .opp-details   { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+  .opp-details summary { cursor: pointer; font-size: 0.82rem; }
+  .opp-details summary a { color: var(--accent); text-decoration: none; }
+  .opp-details summary a:hover { text-decoration: underline; }
+  .opp-body { margin-top: 8px; }
+  .opp-list { margin: 4px 0 0; padding-left: 4px; font-size: 0.8rem; list-style: none; }
+  .opp-list li { margin: 7px 0; line-height: 1.5; }
+  .opp-savings { color: var(--warn); font-size: 0.72rem; }
+  .sel { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.68rem; color: var(--soft);
+         margin: 2px 0 0 6px; word-break: break-all; }
+  .mini { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 8px;
+          color: #fff; font-size: 0.68rem; font-weight: 700; margin-left: 4px; }
+  .badge-err { background: var(--bad); color: #fff; padding: 1px 8px; border-radius: 8px; font-size: 0.68rem; }
+  .err-msg { color: var(--bad); font-size: 0.78rem; }
+  .legend { margin-top: 22px; font-size: 0.72rem; color: var(--muted); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  .disclaimer { font-size: 0.72rem; color: var(--soft); margin-top: 8px; max-width: 760px; }
+  @media print {
+    body { padding: 0; background: #fff; }
+    a.card, .card, .table-wrap { box-shadow: none; }
+    table.sortable th { cursor: auto; }
+    th.sort-asc::after, th.sort-desc::after { content: ""; }
+    .caret { display: none; }
+    .section-title { break-after: avoid; }
+    tr, .opp-details, .card, .finding, .sev-group, .rm-item,
+    .diff-tile, .scope-out { break-inside: avoid; }
+    .scope { break-inside: auto; }
+    .table-wrap { overflow: visible; }
+    .hint-inline { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="brandbar">
+  <span class="logo"></span>
+  <span class="brandname">Website Health Check</span>
+  <span class="sp"></span>
+  <span class="brandctx">Accessibility report · powered by 2create</span>
+</header>
+<h1>Accessibility Bulk Report</h1>
+<div class="report-meta">
+  <div class="rm-item rm-site">
+    <div class="rm-label">Site / sitemap</div>
+    <div class="rm-value"><a href="$sitemapEsc" target="_blank" rel="noopener">$sitemapEsc</a></div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Pages tested</div>
+    <div class="rm-value">$totalPages</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Standard</div>
+    <div class="rm-value" title="$tagsEsc">$stdLabel</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Engine</div>
+    <div class="rm-value">axe-core $engineEsc</div>
+  </div>
+  <div class="rm-item">
+    <div class="rm-label">Generated</div>
+    <div class="rm-value">$generatedAt</div>
+  </div>
+</div>
+
+$diffHtml
+
+<div class="section-title">At a glance</div>
+<p class="verdict">$verdict</p>
+$glanceCards
+<div class="stats">
+  <span><strong>$totalPages</strong> pages tested</span>
+  <span><strong style="color:#c23a2c">$codeViol</strong> code issues (in scope)</span>
+  <span><strong>$designViol</strong> design issues (separate scope)</span>
+</div>
+
+<section class="scope scope-in">
+  <div class="section-title"><span class="scope-tag in">In scope</span> Code improvements</div>
+  <p class="scope-note">Issues we can resolve in the site’s markup and templates — the focus of this engagement. Grouped by priority; start at the top.</p>
+  $codeFindings
+</section>
+
+<section class="scope scope-out">
+  <div class="section-title"><span class="scope-tag out">Separate scope</span> Design-related updates</div>
+  <p class="scope-note">These colour-contrast findings call for design changes (palette, tokens) rather than code fixes. If you’d like, we can optimise the designs for you as a separate scope.</p>
+  $designFindings
+</section>
+
+<div class="legend">
+  <span class="dot" style="background:#cf4a3a"></span> Critical &nbsp;
+  <span class="dot" style="background:#d97a2b"></span> Serious &nbsp;
+  <span class="dot" style="background:#d99a2b"></span> Moderate &nbsp;
+  <span class="dot" style="background:#2a78d6"></span> Minor
+  <div class="disclaimer">
+    ⚠ Automated checks (axe-core, WAVE, Lighthouse) reliably catch only ~30–40% of
+    WCAG success criteria. A clean report is not a compliance certificate — full
+    ADA / WCAG conformance also requires manual keyboard, screen-reader and
+    focus-order testing. "Needs review" items in particular require a human decision.
+  </div>
+</div>
+<script>
+function showTab(cat, btn) {
+  document.querySelectorAll('.tab-panel').forEach(function (p) {
+    p.hidden = (p.id !== 'panel-' + cat);
+  });
+  document.querySelectorAll('.tab').forEach(function (t) {
+    var on = t === btn;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
+function toggleRow(tr) {
+  var d = tr.nextElementSibling;
+  if (!d || !d.classList.contains('detail-row')) return;
+  if (d.hasAttribute('hidden')) { d.removeAttribute('hidden'); tr.classList.add('open'); }
+  else { d.setAttribute('hidden', ''); tr.classList.remove('open'); }
+}
+
+function sortTable(th) {
+  var table = th.closest('table');
+  var tbody = table.tBodies[0];
+  var headRow = th.parentNode;
+  var col = Array.prototype.indexOf.call(headRow.children, th);
+  var asc = !th.classList.contains('sort-asc');
+  for (var k = 0; k < headRow.children.length; k++)
+    headRow.children[k].classList.remove('sort-asc', 'sort-desc');
+  th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+
+  // Pair each main row with its following detail row so they move together.
+  var rows = Array.prototype.slice.call(tbody.rows), pairs = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].classList.contains('detail-row')) continue;
+    var pair = [rows[i]];
+    if (rows[i + 1] && rows[i + 1].classList.contains('detail-row')) { pair.push(rows[i + 1]); i++; }
+    pairs.push(pair);
+  }
+
+  function keyOf(pair) {
+    var c = pair[0].cells[col];
+    if (!c) return { n: null, s: '' };
+    var raw = c.hasAttribute('data-sort') ? c.getAttribute('data-sort') : c.textContent.trim();
+    var numeric = raw !== '' && /^-?[0-9.]+$/.test(raw);
+    return { n: numeric ? parseFloat(raw) : null, s: raw.toLowerCase() };
+  }
+
+  var dir = asc ? 1 : -1;
+  pairs.sort(function (a, b) {
+    var errA = a[0].classList.contains('error-row'), errB = b[0].classList.contains('error-row');
+    if (errA !== errB) return errA ? 1 : -1;            // load errors always last
+    var ka = keyOf(a), kb = keyOf(b);
+    if (ka.n !== null && kb.n !== null) return (ka.n - kb.n) * dir;
+    if (ka.s !== kb.s) return (ka.s < kb.s ? -1 : 1) * dir;
+    return 0;
+  });
+
+  pairs.forEach(function (p) { p.forEach(function (r) { tbody.appendChild(r); }); });
+}
+</script>
+</body>
+</html>
+HTML;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  CSV export
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1793,7 +2239,7 @@ function main(array $argv): void {
         }
     }
 
-    // 4 — HTML report
+    // 4 — HTML report (detailed developer view)
     file_put_contents($args['output'],
         build_html($results, $urlToGroup, $agg, $args['sitemap'],
                    $generatedAt, $args['tags'], $engine, $diff));
@@ -1813,15 +2259,21 @@ function main(array $argv): void {
         echo "✅  Snapshot    → {$args['snapshot']}\n";
     }
 
-    // 5b — PDF (optional, rendered from the HTML report)
+    // 5b — PDF (optional): the client-facing concise view. Rendered from a
+    // temporary client HTML, which is removed afterwards.
     if ($args['pdf']) {
         echo "🖨  Rendering PDF …\n";
         $script = dirname($args['runner']) . '/html-to-pdf.js';
-        if (render_pdf($args['output'], $args['pdf'], $args['node'], $script)) {
+        $clientTmp = preg_replace('/\.html?$/i', '', $args['output']) . '.client.html';
+        file_put_contents($clientTmp,
+            build_client_html($results, $urlToGroup, $agg, $args['sitemap'],
+                              $generatedAt, $args['tags'], $engine, $diff));
+        if (render_pdf($clientTmp, $args['pdf'], $args['node'], $script)) {
             echo "✅  PDF export  → {$args['pdf']}\n";
         } else {
             fwrite(STDERR, "⚠  PDF export failed; HTML and CSV were still written.\n");
         }
+        @unlink($clientTmp);
     }
 
     // 6 — Console summary

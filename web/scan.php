@@ -232,6 +232,8 @@ if ($baseline !== null && is_file(__DIR__ . "/reports/{$baseline}.json")) {
     }
 }
 
+// The on-screen HTML report (Open Full Report + inline preview) is the detailed
+// developer view; the downloadable PDF is the concise client view.
 file_put_contents(__DIR__ . '/' . $htmlRel,
     build_html($results, $urlToGroup, $agg, $args['sitemap'],
                $generatedAt, $args['tags'], $engine, $diff));
@@ -240,17 +242,23 @@ file_put_contents(__DIR__ . '/' . $csvRel,
 file_put_contents(__DIR__ . '/' . $jsonRel,
     json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-// Render a PDF from the HTML report (best-effort; report still works without).
-// Skipped on a stopped scan — the user asked to stop, so don't make them wait.
+// Render the PDF from the client layout (best-effort; report still works
+// without). Skipped on a stopped scan. We write the client HTML to a temp
+// sibling, render from it, then remove it — only the PDF is the client artifact.
 $pdfOk = false;
 if (!$stopped) {
     sse('status', ['message' => 'Rendering the PDF…']);
+    $clientPath = __DIR__ . "/reports/{$id}.client.html";
+    file_put_contents($clientPath,
+        build_client_html($results, $urlToGroup, $agg, $args['sitemap'],
+                          $generatedAt, $args['tags'], $engine, $diff));
     $pdfOk = render_pdf(
-        __DIR__ . '/' . $htmlRel,
+        $clientPath,
         __DIR__ . '/' . $pdfRel,
         $args['node'],
         dirname(__DIR__) . '/html-to-pdf.js'
     );
+    @unlink($clientPath);
 }
 
 $t = $agg['totals'];
