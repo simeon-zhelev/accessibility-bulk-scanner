@@ -4,14 +4,14 @@
  *
  * Reuses the scanner functions from ../accessibility_scanner.php, runs a scan
  * with the parameters from the query string, streams live progress to the
- * browser, then writes the standalone HTML report + CSV into ./reports/ and
+ * browser, then writes the standalone HTML report into ./reports/ and
  * emits their URLs.
  *
  * Events emitted (SSE `event:` types):
  *   status   {message}
  *   meta     {total, concurrency, tags, sitemap}
  *   page     {done, total, url, ok, error, counts}
- *   done     {summary, reportUrl, csvUrl, pdfUrl}
+ *   done     {summary, reportUrl, pdfUrl}
  *   error    {message}
  */
 
@@ -201,7 +201,7 @@ if (!$results) {
         : 'No results returned from the scan. The browser engine may have failed to launch.');
 }
 
-// ── Build the report + CSV and write them where the browser can fetch them ────
+// ── Build the report and write it where the browser can fetch it ─────────────
 sse('status', ['message' => $stopped
     ? 'Scan stopped. Building a report for the pages scanned so far…'
     : 'Building the report…']);
@@ -212,7 +212,6 @@ $generatedAt = date('Y-m-d H:i');
 // finished report by name after stopping (when the SSE `done` never arrives).
 $id      = $token ?? (date('Ymd-His') . '-' . substr(bin2hex(random_bytes(4)), 0, 6));
 $htmlRel = "reports/{$id}.html";
-$csvRel  = "reports/{$id}.csv";
 $pdfRel  = "reports/{$id}.pdf";
 $jsonRel = "reports/{$id}.json";
 
@@ -237,8 +236,6 @@ if ($baseline !== null && is_file(__DIR__ . "/reports/{$baseline}.json")) {
 file_put_contents(__DIR__ . '/' . $htmlRel,
     build_html($results, $urlToGroup, $agg, $args['sitemap'],
                $generatedAt, $args['tags'], $engine, $diff));
-file_put_contents(__DIR__ . '/' . $csvRel,
-    build_csv($results, $urlToGroup));
 file_put_contents(__DIR__ . '/' . $jsonRel,
     json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
@@ -265,7 +262,6 @@ $t = $agg['totals'];
 $donePayload = [
     'stopped'    => $stopped,
     'reportUrl'  => $htmlRel,
-    'csvUrl'     => $csvRel,
     'pdfUrl'     => $pdfOk ? $pdfRel : null,
     'comparedTo' => $comparedTo,
     'summary'   => [
