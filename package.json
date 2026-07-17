@@ -15,8 +15,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@axe-core/playwright": "^4.10.0",
-    "axe-core": "^4.10.0",
+    "@axe-core/playwright": "^4.12.1",
+    "axe-core": "^4.12.1",
     "playwright": "^1.48.0"
   }
 }
